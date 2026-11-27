@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:gravity="center_horizontal"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/calibrationBanner"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_calibration_badge"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvCalibrationInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/btnCalibrationDone"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_calibration_done"
+            android:paddingStart="8dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="2dp"
+            android:text="完成鎖定"
+            android:textColor="#041E49"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/searchPillContainer"
+        android:layout_width="320dp"
+        android:layout_height="48dp"
+        android:clickable="true"
+        android:focusable="false"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="14dp">
+
+        <ImageView
+            android:id="@+id/ivGoogleLogo"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="Google"
+            android:src="@drawable/ic_google_g" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageView
+            android:id="@+id/btnMic"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="語音搜尋"
+            android:padding="6dp"
+            android:src="@drawable/ic_google_mic" />
+
+        <ImageView
+            android:id="@+id/btnLens"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="4dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Google Lens"
+            android:padding="6dp"
+            android:src="@drawable/ic_google_lens" />
+    </LinearLayout>
+
+</LinearLayout>

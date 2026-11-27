@@ -1,0 +1,131 @@
+package com.pixeldock.search.data
+
+import android.content.Context
+import android.content.SharedPreferences
+import com.pixeldock.search.model.DisplayProfile
+
+data class ProfileLayoutConfig(
+    val bottomMarginDp: Int,
+    val xOffsetDp: Int,
+    val widthPercent: Int,
+    val heightDp: Int
+)
+
+enum class DetectionMode(val key: String) {
+    AUTO_SHIZUKU("auto_shizuku"),
+    USAGE_STATS("usage_stats"),
+    ACCESSIBILITY("accessibility");
+
+    companion object {
+        fun fromKey(key: String?): DetectionMode =
+            entries.firstOrNull { it.key == key } ?: AUTO_SHIZUKU
+    }
+}
+
+enum class ThemeMode(val key: String) {
+    SYSTEM("system"),
+    DARK("dark"),
+    LIGHT("light"),
+    DYNAMIC("dynamic");
+
+    companion object {
+        fun fromKey(key: String?): ThemeMode =
+            entries.firstOrNull { it.key == key } ?: SYSTEM
+    }
+}
+
+class PrefsRepository(context: Context) {
+
+    private val prefs: SharedPreferences =
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    var serviceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SERVICE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SERVICE_ENABLED, value).apply()
+
+    var detectionMode: DetectionMode
+        get() = DetectionMode.fromKey(prefs.getString(KEY_DETECTION_MODE, DetectionMode.AUTO_SHIZUKU.key))
+        set(value) = prefs.edit().putString(KEY_DETECTION_MODE, value.key).apply()
+
+    var themeMode: ThemeMode
+        get() = ThemeMode.fromKey(prefs.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.key))
+        set(value) = prefs.edit().putString(KEY_THEME_MODE, value.key).apply()
+
+    var bgAlpha: Int
+        get() = prefs.getInt(KEY_BG_ALPHA, 90).coerceIn(20, 100)
+        set(value) = prefs.edit().putInt(KEY_BG_ALPHA, value.coerceIn(20, 100)).apply()
+
+    var longPressDragEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LONG_PRESS_DRAG, true)
+        set(value) = prefs.edit().putBoolean(KEY_LONG_PRESS_DRAG, value).apply()
+
+    var autoStartOnBoot: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_START_BOOT, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_START_BOOT, value).apply()
+
+    var leftEdgeFeedEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LEFT_EDGE_FEED, true)
+        set(value) = prefs.edit().putBoolean(KEY_LEFT_EDGE_FEED, value).apply()
+
+    var leftEdgeHeightPercent: Int
+        get() = prefs.getInt(KEY_LEFT_EDGE_HEIGHT_PCT, 45).coerceIn(20, 80)
+        set(value) = prefs.edit().putInt(KEY_LEFT_EDGE_HEIGHT_PCT, value.coerceIn(20, 80)).apply()
+
+    var extraLauncherPackages: Set<String>
+        get() = prefs.getStringSet(KEY_EXTRA_LAUNCHERS, emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_EXTRA_LAUNCHERS, value).apply()
+
+    fun getLayout(profile: DisplayProfile): ProfileLayoutConfig {
+        val prefix = profilePrefix(profile)
+        return ProfileLayoutConfig(
+            bottomMarginDp = prefs.getInt("${prefix}bottom_dp", profile.defaultBottomMarginDp)
+                .coerceIn(0, 400),
+            xOffsetDp = prefs.getInt("${prefix}x_offset_dp", profile.defaultXOffsetDp)
+                .coerceIn(-400, 400),
+            widthPercent = prefs.getInt("${prefix}width_pct", profile.defaultWidthPercent)
+                .coerceIn(25, 98),
+            heightDp = prefs.getInt("${prefix}height_dp", profile.defaultHeightDp)
+                .coerceIn(36, 68)
+        )
+    }
+
+    fun saveLayout(profile: DisplayProfile, config: ProfileLayoutConfig) {
+        val prefix = profilePrefix(profile)
+        prefs.edit()
+            .putInt("${prefix}bottom_dp", config.bottomMarginDp.coerceIn(0, 400))
+            .putInt("${prefix}x_offset_dp", config.xOffsetDp.coerceIn(-400, 400))
+            .putInt("${prefix}width_pct", config.widthPercent.coerceIn(25, 98))
+            .putInt("${prefix}height_dp", config.heightDp.coerceIn(36, 68))
+            .putBoolean("${prefix}customized", true)
+            .apply()
+    }
+
+    fun resetLayout(profile: DisplayProfile) {
+        val prefix = profilePrefix(profile)
+        prefs.edit()
+            .remove("${prefix}bottom_dp")
+            .remove("${prefix}x_offset_dp")
+            .remove("${prefix}width_pct")
+            .remove("${prefix}height_dp")
+            .remove("${prefix}customized")
+            .apply()
+    }
+
+    fun hasCustomLayout(profile: DisplayProfile): Boolean =
+        prefs.getBoolean("${profilePrefix(profile)}customized", false)
+
+    private fun profilePrefix(profile: DisplayProfile): String = "profile_${profile.key}_"
+
+    companion object {
+        private const val PREFS_NAME = "pixel_dock_search_prefs"
+        private const val KEY_SERVICE_ENABLED = "service_enabled"
+        private const val KEY_DETECTION_MODE = "detection_mode"
+        private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_BG_ALPHA = "bg_alpha"
+        private const val KEY_LONG_PRESS_DRAG = "long_press_drag"
+        private const val KEY_AUTO_START_BOOT = "auto_start_boot"
+        private const val KEY_EXTRA_LAUNCHERS = "extra_launchers"
+        private const val KEY_LEFT_EDGE_FEED = "left_edge_feed_enabled"
+        private const val KEY_LEFT_EDGE_HEIGHT_PCT = "left_edge_height_pct"
+    }
+}

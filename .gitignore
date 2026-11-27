@@ -1,0 +1,20 @@
+# Gradle & Build
+.gradle/
+build/
+app/build/
+local.properties
+
+# Signing Keystores (Never commit private keys)
+*.p12
+*.jks
+*.keystore
+
+# Build Outputs
+*.apk
+*.aab
+
+# IDE & OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

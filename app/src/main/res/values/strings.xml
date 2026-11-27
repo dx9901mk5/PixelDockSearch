@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PixelDock 搜尋列</string>
+    <string name="accessibility_service_label">PixelDock 桌面即時偵測</string>
+    <string name="accessibility_service_description">僅用於偵測目前是否回到原廠桌面，以便零延遲顯示或隱藏懸浮 Google 搜尋列，不會讀取任何螢幕文字內容。</string>
+</resources>

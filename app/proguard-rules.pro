@@ -1,0 +1,2 @@
+-keep class com.pixeldock.search.shizuku.** { *; }
+-keep interface com.pixeldock.search.shizuku.** { *; }
