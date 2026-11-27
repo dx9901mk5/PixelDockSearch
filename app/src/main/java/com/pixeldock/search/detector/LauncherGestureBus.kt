@@ -21,6 +21,20 @@ object LauncherGestureBus {
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val listeners = CopyOnWriteArraySet<Listener>()
 
+    @Volatile
+    private var autoClickLensDeadlineMs: Long = 0L
+
+    fun requestAutoClickGoogleLens(windowMs: Long = 3500L) {
+        autoClickLensDeadlineMs = System.currentTimeMillis() + windowMs
+    }
+
+    fun isAutoClickGoogleLensPending(): Boolean =
+        System.currentTimeMillis() <= autoClickLensDeadlineMs
+
+    fun consumeAutoClickGoogleLens() {
+        autoClickLensDeadlineMs = 0L
+    }
+
     private val minusOnePackages = setOf(
         "com.vivo.hiboard",
         "com.vivo.assistant",

@@ -68,38 +68,62 @@ object GoogleIntentLauncher {
     }
 
     /**
-     * Lens icon: opens Google App's built-in Google Lens directly (with optional Shizuku fallback
-     * for non-exported internal Google App Lens activities).
+     * Lens icon: opens Google App's built-in Google Lens using verified non-allowlisted entry points
+     * (Shizuku launcher runs first in OverlaySearchService for internal LensActivity).
      */
     fun launchGoogleLens(context: Context): Boolean {
-        val directGoogleAppLensCandidates = listOf(
-            Intent(Intent.ACTION_VIEW).apply {
-                component = ComponentName(
-                    GOOGLE_APP_PACKAGE,
-                    "com.google.android.apps.lens.MainActivity"
-                )
-            },
-            Intent(Intent.ACTION_VIEW).apply {
-                component = ComponentName(
-                    GOOGLE_APP_PACKAGE,
-                    "com.google.android.apps.search.lens.LensActivity"
-                )
-            },
-            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")).apply {
-                setPackage(GOOGLE_APP_PACKAGE)
-            },
-            Intent(Intent.ACTION_VIEW, Uri.parse("googleapp://lens")).apply {
-                setPackage(GOOGLE_APP_PACKAGE)
-            },
-            context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE),
-            Intent(Intent.ACTION_MAIN).apply {
-                component = ComponentName(
-                    LENS_PACKAGE,
-                    "com.google.vr.apps.ornament.app.lens.LensLauncherActivity"
-                )
+        val candidates = mutableListOf<Intent?>()
+        candidates += Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://")).apply {
+            setPackage(GOOGLE_APP_PACKAGE)
+        }
+        candidates += Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://"))
+        candidates += context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE)
+        candidates += Intent(Intent.ACTION_MAIN).apply {
+            component = ComponentName(
+                LENS_PACKAGE,
+                "com.google.vr.apps.ornament.app.lens.LensLauncherActivity"
+            )
+        }
+        candidates += Intent(Intent.ACTION_VIEW).apply {
+            component = ComponentName(
+                GOOGLE_APP_PACKAGE,
+                "com.google.android.apps.search.lens.LensActivity"
+            )
+        }
+
+        // Check PackageManager for any genuinely exported non-allowlist Lens activity inside Google App
+        runCatching {
+            val pkgInfo = context.packageManager.getPackageInfo(
+                GOOGLE_APP_PACKAGE,
+                android.content.pm.PackageManager.GET_ACTIVITIES
+            )
+            pkgInfo.activities
+                ?.filter {
+                    it.exported &&
+                        it.name.contains("Lens", ignoreCase = true) &&
+                        !it.name.contains("Exported", ignoreCase = true)
+                }
+                ?.forEach { info ->
+                    candidates += Intent(Intent.ACTION_VIEW).apply {
+                        component = ComponentName(GOOGLE_APP_PACKAGE, info.name)
+                    }
+                }
+        }
+
+        for (intent in candidates) {
+            if (intent == null) continue
+            val resolvable = runCatching {
+                context.packageManager.resolveActivity(intent, 0) != null
+            }.getOrDefault(false)
+            if (!resolvable) continue
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                context.startActivity(intent)
+                return true
+            } catch (_: Throwable) {
             }
-        )
-        return tryStartAny(context, directGoogleAppLensCandidates)
+        }
+        return false
     }
 
     fun launchGoogleFeed(context: Context) {

@@ -99,6 +99,11 @@ class SearchAccessibilityService : AccessibilityService() {
                         isAppDrawer = false,
                         isPopupOrMenu = false
                     )
+                    if (pkg == "com.google.android.googlequicksearchbox" &&
+                        LauncherGestureBus.isAutoClickGoogleLensPending()
+                    ) {
+                        tryClickGoogleAppLensButton()
+                    }
                     return
                 }
 
@@ -128,8 +133,55 @@ class SearchAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 if (isLauncher) {
                     inspectLauncherHierarchy(pkg, cls, force = false)
+                } else if (pkg == "com.google.android.googlequicksearchbox" &&
+                    LauncherGestureBus.isAutoClickGoogleLensPending()
+                ) {
+                    tryClickGoogleAppLensButton()
                 }
             }
+        }
+    }
+
+    private fun tryClickGoogleAppLensButton() {
+        val root = try {
+            rootInActiveWindow
+        } catch (_: Throwable) {
+            null
+        } ?: return
+
+        try {
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var visited = 0
+            while (queue.isNotEmpty() && visited < 80) {
+                val node = queue.removeFirst()
+                visited++
+                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+                val text = node.text?.toString()?.trim().orEmpty()
+                val viewId = node.viewIdResourceName?.trim().orEmpty()
+                val isLensTarget = desc.contains("智慧鏡頭", ignoreCase = true) ||
+                    desc.contains("Google 鏡頭", ignoreCase = true) ||
+                    desc.contains("智慧镜头", ignoreCase = true) ||
+                    desc.contains("Lens", ignoreCase = true) ||
+                    text.equals("智慧鏡頭", ignoreCase = true) ||
+                    text.equals("Lens", ignoreCase = true) ||
+                    viewId.contains("lens", ignoreCase = true)
+                if (isLensTarget) {
+                    var clickable: AccessibilityNodeInfo? = node
+                    while (clickable != null && !clickable.isClickable) {
+                        clickable = clickable.parent
+                    }
+                    if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        LauncherGestureBus.consumeAutoClickGoogleLens()
+                        break
+                    }
+                }
+                for (i in 0 until node.childCount) {
+                    val child = node.getChild(i) ?: continue
+                    queue.addLast(child)
+                }
+            }
+        } catch (_: Throwable) {
         }
     }
 

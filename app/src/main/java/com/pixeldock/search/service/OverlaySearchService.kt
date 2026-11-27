@@ -997,16 +997,24 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         lensButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                if (!GoogleIntentLauncher.launchGoogleLens(this)) {
-                    bgExecutor.execute {
-                        val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
-                        if (!launchedViaShizuku) {
-                            mainHandler.post {
-                                Toast.makeText(
-                                    this,
-                                    "無法啟動 Google App 內建 Lens（請確認已安裝 Google App 並授權 Shizuku）",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                // Tier 1: Shizuku direct internal LensActivity launch (bypasses non-exported & allowlist restrictions)
+                bgExecutor.execute {
+                    val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
+                    if (!launchedViaShizuku) {
+                        mainHandler.post {
+                            // Tier 2: Verified public Lens deep link / Lens package / exported Lens activity
+                            if (!GoogleIntentLauncher.launchGoogleLens(this)) {
+                                // Tier 3: Accessibility auto-tap Google App's built-in Lens icon
+                                if (AccessibilityForegroundState.isConnected) {
+                                    LauncherGestureBus.requestAutoClickGoogleLens()
+                                    GoogleIntentLauncher.launchGoogleApp(this)
+                                } else {
+                                    Toast.makeText(
+                                        this,
+                                        "無法直接啟動 Google 智慧鏡頭，請開啟 Shizuku 或無障礙服務",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
                             }
                         }
                     }

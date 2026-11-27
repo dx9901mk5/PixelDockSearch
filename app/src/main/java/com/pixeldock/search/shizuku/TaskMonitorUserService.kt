@@ -67,35 +67,48 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
 
     override fun launchGoogleAppLens(): Boolean {
         val commands = listOf(
-            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity",
             "am start -a android.intent.action.VIEW -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity",
-            "am start -a android.intent.action.VIEW -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensExportedActivity",
-            "am start -a android.intent.action.VIEW -d 'google://lens' com.google.android.googlequicksearchbox",
-            "am start -a android.intent.action.VIEW -d 'googleapp://lens' com.google.android.googlequicksearchbox"
+            "am start -a android.intent.action.VIEW -d 'googlelens://' com.google.android.googlequicksearchbox",
+            "am start -a android.intent.action.VIEW -d 'googlelens://'",
+            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity"
         )
         for (cmd in commands) {
             val out = runShell(cmd)
-            if (out.contains("Starting:", ignoreCase = true) &&
-                !out.contains("Error", ignoreCase = true) &&
-                !out.contains("Exception", ignoreCase = true)
-            ) {
+            if (isAmStartSuccess(out) && didGoogleLensStayInForeground()) {
                 return true
             }
         }
-        // Dynamic discovery inside Google App package for any Lens activity name
+        // Dynamic discovery inside Google App package for Lens activities (skipping Exported allowlist trap first)
         val discovered = runShell(
-            "dumpsys package com.google.android.googlequicksearchbox 2>/dev/null | grep -oE 'com\\.google\\.android\\.googlequicksearchbox/[a-zA-Z0-9._$]*[Ll]ens[a-zA-Z0-9._$]*Activity' | head -n 5"
-        )
-        for (comp in discovered.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct()) {
+            "dumpsys package com.google.android.googlequicksearchbox 2>/dev/null | grep -oE 'com\\.google\\.android\\.googlequicksearchbox/[a-zA-Z0-9._$]*[Ll]ens[a-zA-Z0-9._$]*Activity' | sort -u"
+        ).lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+
+        val prioritized = discovered.sortedBy { if (it.contains("Exported", ignoreCase = true)) 1 else 0 }
+        for (comp in prioritized.take(5)) {
             val out = runShell("am start -a android.intent.action.VIEW -n $comp")
-            if (out.contains("Starting:", ignoreCase = true) &&
-                !out.contains("Error", ignoreCase = true) &&
-                !out.contains("Exception", ignoreCase = true)
-            ) {
+            if (isAmStartSuccess(out) && didGoogleLensStayInForeground()) {
                 return true
             }
         }
         return false
+    }
+
+    private fun didGoogleLensStayInForeground(): Boolean {
+        return try {
+            Thread.sleep(240L)
+            val fg = getForegroundPackage()
+            fg == "com.google.android.googlequicksearchbox" || fg == "com.google.ar.lens"
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun isAmStartSuccess(out: String): Boolean {
+        return out.contains("Starting:", ignoreCase = true) &&
+            !out.contains("Error", ignoreCase = true) &&
+            !out.contains("Exception", ignoreCase = true) &&
+            !out.contains("does not exist", ignoreCase = true) &&
+            !out.contains("unable to resolve", ignoreCase = true)
     }
 
     override fun destroy() {
