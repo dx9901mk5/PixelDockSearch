@@ -159,6 +159,18 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    fun launchGoogleAppLens(): Boolean {
+        val svc = taskService ?: run {
+            bindServiceIfNeeded()
+            return false
+        }
+        return try {
+            svc.launchGoogleAppLens()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     companion object {
         private const val REQUEST_CODE_SHIZUKU = 1001
     }

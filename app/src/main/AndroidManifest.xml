@@ -40,6 +40,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".launcher.VoiceSearchBridgeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name=".service.OverlaySearchService"
             android:enabled="true"

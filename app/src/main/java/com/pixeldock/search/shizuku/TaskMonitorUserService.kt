@@ -65,6 +65,39 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
         }
     }
 
+    override fun launchGoogleAppLens(): Boolean {
+        val commands = listOf(
+            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity",
+            "am start -a android.intent.action.VIEW -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity",
+            "am start -a android.intent.action.VIEW -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensExportedActivity",
+            "am start -a android.intent.action.VIEW -d 'google://lens' com.google.android.googlequicksearchbox",
+            "am start -a android.intent.action.VIEW -d 'googleapp://lens' com.google.android.googlequicksearchbox"
+        )
+        for (cmd in commands) {
+            val out = runShell(cmd)
+            if (out.contains("Starting:", ignoreCase = true) &&
+                !out.contains("Error", ignoreCase = true) &&
+                !out.contains("Exception", ignoreCase = true)
+            ) {
+                return true
+            }
+        }
+        // Dynamic discovery inside Google App package for any Lens activity name
+        val discovered = runShell(
+            "dumpsys package com.google.android.googlequicksearchbox 2>/dev/null | grep -oE 'com\\.google\\.android\\.googlequicksearchbox/[a-zA-Z0-9._$]*[Ll]ens[a-zA-Z0-9._$]*Activity' | head -n 5"
+        )
+        for (comp in discovered.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct()) {
+            val out = runShell("am start -a android.intent.action.VIEW -n $comp")
+            if (out.contains("Starting:", ignoreCase = true) &&
+                !out.contains("Error", ignoreCase = true) &&
+                !out.contains("Exception", ignoreCase = true)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
     override fun destroy() {
         exitProcess(0)
     }

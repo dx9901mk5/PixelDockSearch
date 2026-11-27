@@ -75,6 +75,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
     private var overlayRoot: View? = null
     private var pillContainer: LinearLayout? = null
+    private var googleLogoView: ImageView? = null
     private var micButton: ImageView? = null
     private var lensButton: ImageView? = null
     private var calibrationBanner: LinearLayout? = null
@@ -661,6 +662,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         val view = LayoutInflater.from(this).inflate(R.layout.overlay_search_bar, null)
         overlayRoot = view
         pillContainer = view.findViewById(R.id.searchPillContainer)
+        googleLogoView = view.findViewById(R.id.ivGoogleLogo)
         micButton = view.findViewById(R.id.btnMic)
         lensButton = view.findViewById(R.id.btnLens)
         calibrationBanner = view.findViewById(R.id.calibrationBanner)
@@ -940,7 +942,12 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         }
                     } else if (!isDragging && !longPressTriggered) {
                         if (!isCalibrationMode) {
-                            GoogleIntentLauncher.launchGoogleSearch(this)
+                            val tappedLogo = isPointOnGoogleLogo(downRawX, density)
+                            if (tappedLogo) {
+                                GoogleIntentLauncher.launchGoogleApp(this)
+                            } else {
+                                GoogleIntentLauncher.launchGoogleSearch(this)
+                            }
                         }
                     }
                     true
@@ -990,7 +997,20 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         lensButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                GoogleIntentLauncher.launchGoogleLens(this)
+                if (!GoogleIntentLauncher.launchGoogleLens(this)) {
+                    bgExecutor.execute {
+                        val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
+                        if (!launchedViaShizuku) {
+                            mainHandler.post {
+                                Toast.makeText(
+                                    this,
+                                    "無法啟動 Google App 內建 Lens（請確認已安裝 Google App 並授權 Shizuku）",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -998,6 +1018,14 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             isCalibrationMode = false
             applyLayoutAndAppearance()
         }
+    }
+
+    private fun isPointOnGoogleLogo(rawX: Float, density: Float): Boolean {
+        val logo = googleLogoView ?: return false
+        val loc = IntArray(2)
+        logo.getLocationOnScreen(loc)
+        val rightEdge = loc[0] + logo.width + (14f * density)
+        return rawX <= rightEdge
     }
 
     @SuppressLint("ClickableViewAccessibility")
