@@ -8,6 +8,8 @@ local.properties
 *.p12
 *.jks
 *.keystore
+signing-backup/
+SIGNING_INFO.txt
 
 # Build Outputs
 *.apk
