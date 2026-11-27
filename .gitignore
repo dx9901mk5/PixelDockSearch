@@ -11,9 +11,11 @@ local.properties
 signing-backup/
 SIGNING_INFO.txt
 
-# Build Outputs
+# Build Outputs & Media
 *.apk
 *.aab
+*.mp4
+示範影片/
 
 # IDE & OS
 .idea/

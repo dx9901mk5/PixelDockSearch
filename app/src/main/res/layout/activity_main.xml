@@ -107,7 +107,55 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="預熱 Google Feed（原廠負一屏／左側滑出即刻顯示）" />
+                    android:text="預熱 Google Feed（左側邊緣／原廠負一屏滑出卡片）" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchBarSwipeFeed"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="在搜尋列上向右滑出 Google Feed（過半展開）" />
+
+                <TextView
+                    android:id="@+id/tvFeedTriggerSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:alpha="0.8"
+                    android:text="目前啟動模式：第一首頁左滑啟動"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+
+                <RadioGroup
+                    android:id="@+id/rgFeedBehavior"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp">
+
+                    <RadioButton
+                        android:id="@+id/rbFeedFirstPage"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="從「第一首頁」左側滑出 Google Feed" />
+
+                    <RadioButton
+                        android:id="@+id/rbFeedMinusOneReplace"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="進入「原廠負一屏」時直接覆蓋成 Google Feed" />
+
+                    <RadioButton
+                        android:id="@+id/rbFeedMinusOneEdge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="保留原廠負一屏，在負一屏左側再滑出 Google Feed" />
+                </RadioGroup>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPickFeedPage"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="確認第一首頁與原廠負一屏（回桌面懸浮設定）" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnGoHomeCalibrate"

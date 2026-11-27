@@ -34,6 +34,20 @@ enum class ThemeMode(val key: String) {
     }
 }
 
+enum class FeedTriggerMode(val key: String) {
+    FIRST_HOME_PAGE("first_home_page"),
+    MINUS_ONE_AUTO_REPLACE("minus_one_auto_replace"),
+    MINUS_ONE_EDGE_LAUNCH("minus_one_edge_launch");
+
+    companion object {
+        fun fromKey(key: String?): FeedTriggerMode = when (key) {
+            "minus_one_screen", MINUS_ONE_AUTO_REPLACE.key -> MINUS_ONE_AUTO_REPLACE
+            MINUS_ONE_EDGE_LAUNCH.key -> MINUS_ONE_EDGE_LAUNCH
+            else -> FIRST_HOME_PAGE
+        }
+    }
+}
+
 class PrefsRepository(context: Context) {
 
     private val prefs: SharedPreferences =
@@ -70,6 +84,26 @@ class PrefsRepository(context: Context) {
     var leftEdgeHeightPercent: Int
         get() = prefs.getInt(KEY_LEFT_EDGE_HEIGHT_PCT, 45).coerceIn(20, 80)
         set(value) = prefs.edit().putInt(KEY_LEFT_EDGE_HEIGHT_PCT, value.coerceIn(20, 80)).apply()
+
+    var feedTriggerMode: FeedTriggerMode
+        get() = FeedTriggerMode.fromKey(prefs.getString(KEY_FEED_TRIGGER_MODE, FeedTriggerMode.FIRST_HOME_PAGE.key))
+        set(value) = prefs.edit().putString(KEY_FEED_TRIGGER_MODE, value.key).apply()
+
+    var searchBarSwipeFeedEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BAR_SWIPE_FEED, true)
+        set(value) = prefs.edit().putBoolean(KEY_BAR_SWIPE_FEED, value).apply()
+
+    var customMinusOnePackage: String
+        get() = prefs.getString(KEY_CUSTOM_MINUS_ONE_PKG, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_CUSTOM_MINUS_ONE_PKG, value).apply()
+
+    var customMinusOneSignature: String
+        get() = prefs.getString(KEY_CUSTOM_MINUS_ONE_SIG, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_CUSTOM_MINUS_ONE_SIG, value).apply()
+
+    var customFirstPageSignature: String
+        get() = prefs.getString(KEY_CUSTOM_FIRST_PAGE_SIG, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_CUSTOM_FIRST_PAGE_SIG, value).apply()
 
     var extraLauncherPackages: Set<String>
         get() = prefs.getStringSet(KEY_EXTRA_LAUNCHERS, emptySet()) ?: emptySet()
@@ -127,5 +161,10 @@ class PrefsRepository(context: Context) {
         private const val KEY_EXTRA_LAUNCHERS = "extra_launchers"
         private const val KEY_LEFT_EDGE_FEED = "left_edge_feed_enabled"
         private const val KEY_LEFT_EDGE_HEIGHT_PCT = "left_edge_height_pct"
+        private const val KEY_FEED_TRIGGER_MODE = "feed_trigger_mode"
+        private const val KEY_BAR_SWIPE_FEED = "search_bar_swipe_feed"
+        private const val KEY_CUSTOM_MINUS_ONE_PKG = "custom_minus_one_pkg"
+        private const val KEY_CUSTOM_MINUS_ONE_SIG = "custom_minus_one_sig"
+        private const val KEY_CUSTOM_FIRST_PAGE_SIG = "custom_first_page_sig"
     }
 }

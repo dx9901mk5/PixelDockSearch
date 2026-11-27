@@ -17,6 +17,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.pixeldock.search.BuildConfig
 import com.pixeldock.search.R
 import com.pixeldock.search.data.DetectionMode
+import com.pixeldock.search.data.FeedTriggerMode
 import com.pixeldock.search.data.PrefsRepository
 import com.pixeldock.search.data.ThemeMode
 import com.pixeldock.search.databinding.ActivityMainBinding
@@ -219,6 +220,42 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        binding.switchBarSwipeFeed.setOnCheckedChangeListener { _, isChecked ->
+            if (!suppressListeners) {
+                prefs.searchBarSwipeFeedEnabled = isChecked
+                notifyOverlayRefresh()
+            }
+        }
+
+        binding.rgFeedBehavior.setOnCheckedChangeListener { _, checkedId ->
+            if (suppressListeners) return@setOnCheckedChangeListener
+            prefs.feedTriggerMode = when (checkedId) {
+                R.id.rbFeedMinusOneReplace -> FeedTriggerMode.MINUS_ONE_AUTO_REPLACE
+                R.id.rbFeedMinusOneEdge -> FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH
+                else -> FeedTriggerMode.FIRST_HOME_PAGE
+            }
+            notifyOverlayRefresh()
+            refreshStatusUi()
+        }
+
+        binding.btnPickFeedPage.setOnClickListener {
+            if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "請先授予懸浮窗權限", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            prefs.serviceEnabled = true
+            suppressListeners = true
+            binding.switchMasterService.isChecked = true
+            suppressListeners = false
+
+            OverlaySearchService.start(this, OverlaySearchService.ACTION_PICK_FEED_PAGE)
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(homeIntent)
+        }
+
         binding.btnCheckUpdate.setOnClickListener {
             checkForUpdates(autoPrompt = true)
         }
@@ -370,6 +407,12 @@ class MainActivity : AppCompatActivity() {
         binding.switchLongPressDrag.isChecked = prefs.longPressDragEnabled
         binding.switchAutoBoot.isChecked = prefs.autoStartOnBoot
         binding.switchLeftEdgeFeed.isChecked = prefs.leftEdgeFeedEnabled
+        binding.switchBarSwipeFeed.isChecked = prefs.searchBarSwipeFeedEnabled
+        when (prefs.feedTriggerMode) {
+            FeedTriggerMode.FIRST_HOME_PAGE -> binding.rgFeedBehavior.check(R.id.rbFeedFirstPage)
+            FeedTriggerMode.MINUS_ONE_AUTO_REPLACE -> binding.rgFeedBehavior.check(R.id.rbFeedMinusOneReplace)
+            FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH -> binding.rgFeedBehavior.check(R.id.rbFeedMinusOneEdge)
+        }
         suppressListeners = false
     }
 
@@ -390,6 +433,19 @@ class MainActivity : AppCompatActivity() {
             appendLine("• 偵測引擎：${detector.activeEngineLabel()}")
             appendLine("• 原廠桌面：$defaultLauncher")
             append("• 目前型態：${snapshot.profile.displayNameZh} (${snapshot.widthDp}x${snapshot.heightDp} dp)")
+        }
+
+        binding.tvFeedTriggerSummary.text = buildString {
+            val firstSig = prefs.customFirstPageSignature.ifBlank { "未標記" }
+            val minusSig = prefs.customMinusOneSignature.ifBlank {
+                prefs.customMinusOnePackage.ifBlank { "自動偵測" }
+            }
+            val modeText = when (prefs.feedTriggerMode) {
+                FeedTriggerMode.FIRST_HOME_PAGE -> "第一首頁左滑啟動"
+                FeedTriggerMode.MINUS_ONE_AUTO_REPLACE -> "原廠負一屏直接覆蓋成 Feed"
+                FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH -> "原廠負一屏左側再滑出 Feed"
+            }
+            append("模式：$modeText\n第一首頁：$firstSig ｜ 負一屏（自動隱藏搜尋列）：$minusSig")
         }
 
         refreshProfilesOverview(snapshot.profile)

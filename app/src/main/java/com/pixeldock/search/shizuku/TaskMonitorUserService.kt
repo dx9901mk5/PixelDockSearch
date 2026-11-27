@@ -11,16 +11,25 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
     private val componentPattern = Pattern.compile("([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)+)/")
 
     override fun getForegroundPackage(): String {
-        val windowOutput = runShell(
-            "dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'"
+        var windowOutput = runShell(
+            "dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'"
         )
+        if (windowOutput.isBlank()) {
+            windowOutput = runShell(
+                "dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'"
+            )
+        }
         if (windowOutput.contains("NotificationShade") ||
             windowOutput.contains("StatusBar") ||
             windowOutput.contains("Bouncer") ||
             windowOutput.contains("Keyguard") ||
             windowOutput.contains("Recents") ||
             windowOutput.contains("AllApps") ||
-            windowOutput.contains("AppDrawer")
+            windowOutput.contains("AppDrawer") ||
+            windowOutput.contains("PopupWindow") ||
+            windowOutput.contains("DeepShortcut") ||
+            windowOutput.contains("ActionMenu") ||
+            windowOutput.contains("Folder")
         ) {
             return SYSTEM_UI_OVERLAY
         }

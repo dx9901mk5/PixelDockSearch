@@ -14,6 +14,7 @@ import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -22,6 +23,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
@@ -35,12 +37,15 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.pixeldock.search.R
+import com.pixeldock.search.data.FeedTriggerMode
 import com.pixeldock.search.data.PrefsRepository
 import com.pixeldock.search.data.ProfileLayoutConfig
 import com.pixeldock.search.data.ThemeMode
+import com.pixeldock.search.detector.AccessibilityForegroundState
 import com.pixeldock.search.detector.LauncherDetector
 import com.pixeldock.search.detector.LauncherGestureBus
 import com.pixeldock.search.launcher.GoogleIntentLauncher
@@ -50,6 +55,7 @@ import com.pixeldock.search.ui.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 class OverlaySearchService : Service(), LauncherGestureBus.Listener {
@@ -84,11 +90,19 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     private var leftEdgeView: View? = null
     private var leftEdgeParams: WindowManager.LayoutParams? = null
 
+    // Floating Top Page-Confirmation HUD (for selecting First Home Page vs Minus-One Screen)
+    private var pagePickerView: LinearLayout? = null
+    private var pagePickerStatusText: TextView? = null
+    private var latestObservedPkg: String = ""
+    private var latestObservedCls: String = ""
+    private var latestObservedSignature: String = ""
+
     private var isOverlayAttached = false
     private var isOverlayVisible = false
     private var isCalibrationMode = false
     private var isScreenInteractive = true
     private var isHiddenByDrawer = false
+    private var isHiddenByPopup = false
     private var drawerScrollOffsetPx = 0f
     private var currentSnapshot: DisplayProfile.DisplayMetricsSnapshot? = null
 
@@ -111,7 +125,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             if (!isRunning) return
             if (isCalibrationMode) {
                 mainHandler.post { setOverlayVisibility(true) }
-                mainHandler.postDelayed(this, POLL_INTERVAL_MS)
+                mainHandler.postDelayed(this, SLOW_POLL_INTERVAL_MS)
                 return
             }
             if (!isScreenInteractive || keyguardManager.isKeyguardLocked) {
@@ -119,12 +133,35 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 mainHandler.postDelayed(this, IDLE_POLL_INTERVAL_MS)
                 return
             }
+
+            // When Accessibility is connected, it drives instant <16ms events via LauncherGestureBus;
+            // we only keep a light safety heartbeat unless the page picker HUD is open.
+            if (AccessibilityForegroundState.isConnected && pagePickerView == null) {
+                val show = !AccessibilityForegroundState.isSystemOverlay &&
+                    !AccessibilityForegroundState.isAppDrawerOpen &&
+                    !AccessibilityForegroundState.isLauncherPopupOpen &&
+                    !AccessibilityForegroundState.isMinusOneActive &&
+                    AccessibilityForegroundState.foregroundPackage in detector.getLauncherPackages()
+                if (!isHiddenByDrawer && !isHiddenByPopup) {
+                    setOverlayVisibility(show)
+                } else if (!show) {
+                    setOverlayVisibility(false)
+                }
+                mainHandler.postDelayed(this, ACCESSIBILITY_HEARTBEAT_MS)
+                return
+            }
+
             if (pollInFlight.compareAndSet(false, true)) {
                 bgExecutor.execute {
                     val minusOne = try {
-                        prefs.leftEdgeFeedEnabled && detector.isMinusOneScreenActive()
+                        pagePickerView == null && detector.isMinusOneScreenActive()
                     } catch (_: Throwable) {
                         false
+                    }
+                    val shizukuPkg = if (pagePickerView != null) {
+                        shizukuManager.getForegroundPackage().orEmpty()
+                    } else {
+                        ""
                     }
                     val show = if (minusOne) {
                         false
@@ -138,21 +175,30 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     pollInFlight.set(false)
 
                     mainHandler.post {
-                        if (minusOne && !feedController.isOverlayShowing()) {
+                        if (pagePickerView != null && shizukuPkg.isNotBlank() && !AccessibilityForegroundState.isConnected) {
+                            latestObservedPkg = shizukuPkg
+                            latestObservedSignature = "$shizukuPkg|"
+                            updatePagePickerStatus()
+                        }
+                        if (minusOne &&
+                            prefs.leftEdgeFeedEnabled &&
+                            prefs.feedTriggerMode == FeedTriggerMode.MINUS_ONE_AUTO_REPLACE &&
+                            !feedController.isOverlayShowing()
+                        ) {
                             feedController.slideInFromLeft(returnHomeOnClose = true)
                         }
-                        if (!isHiddenByDrawer) {
-                            setOverlayVisibility(show)
+                        if (!isHiddenByDrawer && !isHiddenByPopup) {
+                            setOverlayVisibility(show, isMinusOne = minusOne)
                         } else if (!show) {
-                            // Left launcher completely
                             isHiddenByDrawer = false
+                            isHiddenByPopup = false
                             drawerScrollOffsetPx = 0f
-                            setOverlayVisibility(false)
+                            setOverlayVisibility(false, isMinusOne = minusOne)
                         }
                     }
                 }
             }
-            mainHandler.postDelayed(this, POLL_INTERVAL_MS)
+            mainHandler.postDelayed(this, FAST_POLL_INTERVAL_MS)
         }
     }
 
@@ -172,6 +218,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenInteractive = false
                     isHiddenByDrawer = false
+                    isHiddenByPopup = false
                     drawerScrollOffsetPx = 0f
                     setOverlayVisibility(false)
                     feedController.dismiss(returnHome = false)
@@ -212,7 +259,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         if (Settings.canDrawOverlays(this)) {
             createAndAttachOverlay()
-            if (prefs.leftEdgeFeedEnabled) {
+            if (prefs.leftEdgeFeedEnabled || prefs.searchBarSwipeFeedEnabled) {
                 feedController.prewarm()
             }
         }
@@ -227,22 +274,31 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 return START_NOT_STICKY
             }
             ACTION_TOGGLE_CALIBRATION -> {
+                dismissPagePickerHud()
                 isCalibrationMode = !isCalibrationMode
                 isHiddenByDrawer = false
+                isHiddenByPopup = false
                 drawerScrollOffsetPx = 0f
                 applyLayoutAndAppearance()
                 if (isCalibrationMode) setOverlayVisibility(true)
             }
             ACTION_ENTER_CALIBRATION -> {
+                dismissPagePickerHud()
                 isCalibrationMode = true
                 isHiddenByDrawer = false
+                isHiddenByPopup = false
                 drawerScrollOffsetPx = 0f
                 applyLayoutAndAppearance()
                 setOverlayVisibility(true)
             }
+            ACTION_PICK_FEED_PAGE -> {
+                isCalibrationMode = false
+                applyLayoutAndAppearance()
+                showPagePickerHud()
+            }
             ACTION_REFRESH_LAYOUT -> {
                 refreshDisplayProfileAndLayout()
-                if (prefs.leftEdgeFeedEnabled) {
+                if (prefs.leftEdgeFeedEnabled || prefs.searchBarSwipeFeedEnabled) {
                     feedController.prewarm()
                 }
             }
@@ -259,6 +315,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         isRunning = false
         mainHandler.removeCallbacksAndMessages(null)
         LauncherGestureBus.unregister(this)
+        dismissPagePickerHud()
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Throwable) {
@@ -277,8 +334,40 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     // LauncherGestureBus.Listener
+    override fun onForegroundVisibilityChanged(
+        shouldShowHomeOverlay: Boolean,
+        isAppDrawer: Boolean,
+        isPopupOrMenu: Boolean
+    ) {
+        if (isCalibrationMode || !isOverlayAttached) return
+        isHiddenByDrawer = isAppDrawer
+        isHiddenByPopup = isPopupOrMenu
+        if (!shouldShowHomeOverlay) {
+            // Instant 0ms hide on app launch, popup menu (Fig 1), or app drawer (Fig 3)
+            mainHandler.removeCallbacks(drawerSettleRunnable)
+            drawerScrollOffsetPx = 0f
+            setOverlayVisibility(false)
+        } else {
+            drawerScrollOffsetPx = 0f
+            setOverlayVisibility(true)
+        }
+    }
+
+    override fun onCurrentPageSnapshotChanged(pkg: String, cls: String, pageSignature: String) {
+        latestObservedPkg = pkg
+        latestObservedCls = cls
+        latestObservedSignature = pageSignature
+        if (pagePickerView != null) {
+            updatePagePickerStatus()
+        }
+        // Refresh left-edge active visibility when switching between Home pages
+        if (isOverlayVisible) {
+            updateLeftEdgeVisibility(true)
+        }
+    }
+
     override fun onVerticalScroll(deltaY: Int) {
-        if (isCalibrationMode || !isOverlayAttached || !isOverlayVisible || isHiddenByDrawer) return
+        if (isCalibrationMode || !isOverlayAttached || !isOverlayVisible || isHiddenByDrawer || isHiddenByPopup) return
         val root = overlayRoot ?: return
         val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this)
         val slideOutDistance = (140f * snapshot.density).coerceAtLeast(180f)
@@ -292,9 +381,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         if (drawerScrollOffsetPx >= slideOutDistance * 0.42f) {
             isHiddenByDrawer = true
-            animateSlideOutUpward(durationMs = 150L)
+            animateSlideOutUpward(durationMs = 130L)
         } else {
-            mainHandler.postDelayed(drawerSettleRunnable, 220L)
+            mainHandler.postDelayed(drawerSettleRunnable, 200L)
         }
     }
 
@@ -303,21 +392,26 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         mainHandler.removeCallbacks(drawerSettleRunnable)
         if (isOpen) {
             isHiddenByDrawer = true
-            animateSlideOutUpward(durationMs = 150L)
+            animateSlideOutUpward(durationMs = 130L)
         } else {
             isHiddenByDrawer = false
             drawerScrollOffsetPx = 0f
-            setOverlayVisibility(true)
+            if (!isHiddenByPopup) {
+                setOverlayVisibility(true)
+            }
         }
     }
 
     override fun onMinusOneScreenDetected(packageName: String) {
-        if (isCalibrationMode || !prefs.leftEdgeFeedEnabled) return
-        setOverlayVisibility(false)
+        if (isCalibrationMode || pagePickerView != null) return
+        // Always hide bottom search bar on Minus-One screen
+        setOverlayVisibility(false, isMinusOne = true)
+        if (!prefs.leftEdgeFeedEnabled) return
+        if (prefs.feedTriggerMode != FeedTriggerMode.MINUS_ONE_AUTO_REPLACE) return
         feedController.slideInFromLeft(returnHomeOnClose = true)
     }
 
-    private fun animateSlideOutUpward(durationMs: Long = 180L) {
+    private fun animateSlideOutUpward(durationMs: Long = 160L) {
         val root = overlayRoot ?: return
         val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this)
         val targetY = -(snapshot.heightPx * 0.35f).coerceAtLeast(240f * snapshot.density)
@@ -335,6 +429,229 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 leftEdgeView?.visibility = View.GONE
             }
             .start()
+    }
+
+    // Floating Top Confirmation HUD for Choosing First Home Page, OEM Minus-One Screen & Trigger Behavior
+    private fun showPagePickerHud() {
+        if (!Settings.canDrawOverlays(this)) return
+        dismissPagePickerHud()
+
+        val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this)
+        val density = snapshot.density
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 18f * density
+                setColor(Color.parseColor("#F01E2025"))
+                setStroke((1.5f * density).roundToInt(), Color.parseColor("#8AB4F8"))
+            }
+            elevation = 16f * density
+            setPadding(
+                (14 * density).roundToInt(),
+                (12 * density).roundToInt(),
+                (14 * density).roundToInt(),
+                (12 * density).roundToInt()
+            )
+        }
+
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val title = TextView(this).apply {
+            text = "確認桌面第一首頁與原廠負一屏"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            paint.isFakeBoldText = true
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val btnDone = makePickerButton("完成", "#3C4043", Color.WHITE, density) {
+            dismissPagePickerHud()
+            refreshDisplayProfileAndLayout()
+        }
+        headerRow.addView(title)
+        headerRow.addView(btnDone)
+
+        val hint = TextView(this).apply {
+            text = "1. 先滑動到目標頁並標記「第一首頁」與「原廠負一屏」（負一屏將自動隱藏底部搜尋列）\n2. 選擇 Google Feed 的啟動方式："
+            setTextColor(Color.parseColor("#D0D5DD"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setPadding(0, (4 * density).roundToInt(), 0, (4 * density).roundToInt())
+        }
+
+        val statusTv = TextView(this).apply {
+            setTextColor(Color.parseColor("#8AB4F8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(0, (2 * density).roundToInt(), 0, (8 * density).roundToInt())
+        }
+        pagePickerStatusText = statusTv
+
+        // Row 1: Mark current page
+        val markRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val btnMarkFirst = makePickerButton("標記此頁為「第一首頁」", "#1A73E8", Color.WHITE, density) {
+            prefs.customFirstPageSignature = latestObservedSignature
+            Toast.makeText(this, "已記錄第一首頁特徵", Toast.LENGTH_SHORT).show()
+            updatePagePickerStatus()
+        }
+
+        val btnMarkMinusOne = makePickerButton("標記此頁為「原廠負一屏」", "#34A853", Color.WHITE, density) {
+            prefs.customMinusOnePackage = latestObservedPkg
+            prefs.customMinusOneSignature = latestObservedSignature
+            Toast.makeText(this, "已記錄原廠負一屏（將隱藏底部搜尋列）", Toast.LENGTH_SHORT).show()
+            updatePagePickerStatus()
+        }
+
+        markRow.addView(btnMarkFirst, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = (6 * density).roundToInt()
+        })
+        markRow.addView(btnMarkMinusOne, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        // Row 2: Choose trigger behavior
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (8 * density).roundToInt(), 0, 0)
+        }
+
+        lateinit var btnModeFirst: TextView
+        lateinit var btnModeReplace: TextView
+        lateinit var btnModeEdgeOnMinusOne: TextView
+
+        fun refreshModeButtons() {
+            val mode = prefs.feedTriggerMode
+            stylePickerSelection(btnModeFirst, mode == FeedTriggerMode.FIRST_HOME_PAGE, density)
+            stylePickerSelection(btnModeReplace, mode == FeedTriggerMode.MINUS_ONE_AUTO_REPLACE, density)
+            stylePickerSelection(btnModeEdgeOnMinusOne, mode == FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH, density)
+        }
+
+        btnModeFirst = makePickerButton("第一首頁左滑", "#3C4043", Color.WHITE, density) {
+            prefs.feedTriggerMode = FeedTriggerMode.FIRST_HOME_PAGE
+            prefs.leftEdgeFeedEnabled = true
+            feedController.prewarm()
+            refreshModeButtons()
+            updatePagePickerStatus()
+        }
+        btnModeReplace = makePickerButton("負一屏直接覆蓋", "#3C4043", Color.WHITE, density) {
+            prefs.feedTriggerMode = FeedTriggerMode.MINUS_ONE_AUTO_REPLACE
+            prefs.leftEdgeFeedEnabled = true
+            feedController.prewarm()
+            refreshModeButtons()
+            updatePagePickerStatus()
+        }
+        btnModeEdgeOnMinusOne = makePickerButton("負一屏內左滑啟動", "#3C4043", Color.WHITE, density) {
+            prefs.feedTriggerMode = FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH
+            prefs.leftEdgeFeedEnabled = true
+            feedController.prewarm()
+            refreshModeButtons()
+            updatePagePickerStatus()
+        }
+        refreshModeButtons()
+
+        modeRow.addView(btnModeFirst, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = (4 * density).roundToInt()
+        })
+        modeRow.addView(btnModeReplace, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = (4 * density).roundToInt()
+        })
+        modeRow.addView(btnModeEdgeOnMinusOne, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        container.addView(headerRow)
+        container.addView(hint)
+        container.addView(statusTv)
+        container.addView(markRow)
+        container.addView(modeRow)
+
+        val statusBarH = getStatusBarHeightPx()
+        val params = WindowManager.LayoutParams(
+            (snapshot.widthPx * 0.94f).roundToInt().coerceAtMost((460 * density).roundToInt()),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = statusBarH + (10 * density).roundToInt()
+        }
+
+        try {
+            windowManager.addView(container, params)
+            pagePickerView = container
+            updatePagePickerStatus()
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun stylePickerSelection(button: TextView, selected: Boolean, density: Float) {
+        button.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 10f * density
+            setColor(if (selected) Color.parseColor("#1A73E8") else Color.parseColor("#3C4043"))
+        }
+    }
+
+    private fun makePickerButton(
+        label: String,
+        bgHex: String,
+        textColor: Int,
+        density: Float,
+        onClick: () -> Unit
+    ): TextView {
+        return TextView(this).apply {
+            text = label
+            setTextColor(textColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            paint.isFakeBoldText = true
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 10f * density
+                setColor(Color.parseColor(bgHex))
+            }
+            setPadding(
+                (8 * density).roundToInt(),
+                (8 * density).roundToInt(),
+                (8 * density).roundToInt(),
+                (8 * density).roundToInt()
+            )
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun updatePagePickerStatus() {
+        val current = when {
+            latestObservedSignature.isNotBlank() -> latestObservedSignature
+            latestObservedPkg.isNotBlank() -> latestObservedPkg
+            else -> "請滑動桌面偵測…"
+        }
+        val firstSaved = prefs.customFirstPageSignature.ifBlank { "未標記" }
+        val minusSaved = prefs.customMinusOneSignature.ifBlank {
+            prefs.customMinusOnePackage.ifBlank { "未標記" }
+        }
+        pagePickerStatusText?.text = "目前：$current\n已存第一首頁：$firstSaved ｜ 已存負一屏：$minusSaved"
+    }
+
+    private fun dismissPagePickerHud() {
+        pagePickerView?.let { v ->
+            try {
+                windowManager.removeViewImmediate(v)
+            } catch (_: Throwable) {
+            }
+        }
+        pagePickerView = null
+        pagePickerStatusText = null
+    }
+
+    private fun getStatusBarHeightPx(): Int {
+        val resId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resId > 0) resources.getDimensionPixelSize(resId) else 0
     }
 
     @SuppressLint("ClickableViewAccessibility", "InflateParams")
@@ -388,10 +705,21 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         if (leftEdgeView != null) return
         val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this)
         val density = snapshot.density
+        val edgeWidthPx = (26 * density).roundToInt()
+        // Cap height strictly below Android's 200dp systemGestureExclusionRects limit so OS Back never steals touch!
+        val maxExcludedHeightPx = (196 * density).roundToInt()
+        val edgeHeightPx = min((snapshot.heightPx * 0.45f).roundToInt(), maxExcludedHeightPx)
+
         val edge = View(this)
+        edge.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && v.width > 0 && v.height > 0) {
+                v.systemGestureExclusionRects = listOf(Rect(0, 0, v.width, v.height))
+            }
+        }
+
         val params = WindowManager.LayoutParams(
-            (18 * density).roundToInt(),
-            (snapshot.heightPx * (prefs.leftEdgeHeightPercent / 100f)).roundToInt(),
+            edgeWidthPx,
+            edgeHeightPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -402,8 +730,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         var downX = 0f
         var draggingFeed = false
-        var velocityTracker: VelocityTracker? = null
-        val dragStartThreshold = 14f * density
+        val dragStartThreshold = 10f * density
 
         edge.setOnTouchListener { v, event ->
             val snap = currentSnapshot ?: DisplayProfile.fromContext(this)
@@ -411,12 +738,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 MotionEvent.ACTION_DOWN -> {
                     downX = event.rawX
                     draggingFeed = false
-                    velocityTracker?.recycle()
-                    velocityTracker = VelocityTracker.obtain().apply { addMovement(event) }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    velocityTracker?.addMovement(event)
                     val dx = event.rawX - downX
                     if (!draggingFeed && dx > dragStartThreshold) {
                         draggingFeed = true
@@ -429,14 +753,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    velocityTracker?.addMovement(event)
-                    velocityTracker?.computeCurrentVelocity(1000)
-                    val vx = velocityTracker?.xVelocity ?: 0f
-                    velocityTracker?.recycle()
-                    velocityTracker = null
-
                     if (draggingFeed) {
-                        feedController.endInteractiveDrag(event.rawX, vx, snap.widthPx)
+                        // Strict 50% rule: finger must pass halfway across screen to open; otherwise glides back
+                        feedController.endInteractiveDrag(event.rawX, snap.widthPx)
                     }
                     draggingFeed = false
                     true
@@ -484,6 +803,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         var startXOffsetDp = 0
         var isDragging = false
         var isSwipingUp = false
+        var isSwipingRightFeed = false
         var longPressTriggered = false
         var pillVelocityTracker: VelocityTracker? = null
 
@@ -519,7 +839,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         )
 
         val pill = pillContainer ?: return
-        pill.setOnTouchListener { _, event ->
+        pill.setOnTouchListener { v, event ->
             val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this)
             val density = snapshot.density
 
@@ -540,6 +860,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     startXOffsetDp = cfg.xOffsetDp
                     isDragging = false
                     isSwipingUp = false
+                    isSwipingRightFeed = false
                     longPressTriggered = false
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = VelocityTracker.obtain().apply { addMovement(event) }
@@ -552,14 +873,22 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     pillVelocityTracker?.addMovement(event)
                     val dx = event.rawX - downRawX
                     val dy = event.rawY - downRawY
-                    if (!isDragging && !isSwipingUp && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                    if (!isDragging && !isSwipingUp && !isSwipingRightFeed &&
+                        (abs(dx) > touchSlop || abs(dy) > touchSlop)
+                    ) {
                         mainHandler.removeCallbacks(longPressRunnable)
                         if (isCalibrationMode) {
                             isDragging = true
+                        } else if (prefs.searchBarSwipeFeedEnabled && dx > touchSlop && dx > abs(dy) * 1.15f) {
+                            // Fig 2: Right-swipe directly on the Google Search Bar pulls out Google Feed 1:1
+                            isSwipingRightFeed = true
+                            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                            feedController.beginInteractiveDrag(snapshot.widthPx)
                         } else if (dy < -touchSlop && abs(dy) > abs(dx) * 1.2f) {
                             isSwipingUp = true
                         }
                     }
+
                     if (isCalibrationMode && isDragging) {
                         val deltaXdp = (dx / density).roundToInt()
                         val deltaYdp = (-dy / density).roundToInt()
@@ -572,6 +901,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         prefs.saveLayout(snapshot.profile, updated)
                         applyWindowLayout(snapshot, updated)
                         updateCalibrationLabel(snapshot.profile, updated)
+                    } else if (isSwipingRightFeed) {
+                        val revealPx = ((event.rawX - downRawX) * 1.25f).coerceIn(0f, snapshot.widthPx.toFloat())
+                        feedController.updateInteractiveDrag(revealPx, snapshot.widthPx)
                     } else if (!isCalibrationMode && isSwipingUp) {
                         val root = overlayRoot
                         val upOffset = (-dy).coerceAtLeast(0f)
@@ -589,7 +921,12 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = null
 
-                    if (isSwipingUp) {
+                    if (isSwipingRightFeed) {
+                        val revealPx = ((event.rawX - downRawX) * 1.25f).coerceIn(0f, snapshot.widthPx.toFloat())
+                        // Strict 50% rule: card must pass halfway across screen to open; otherwise glides back
+                        feedController.endInteractiveDrag(revealPx, snapshot.widthPx)
+                        isSwipingRightFeed = false
+                    } else if (isSwipingUp) {
                         val dy = event.rawY - downRawY
                         if (dy < -48f * density || vy < -600f) {
                             val duration = (180L * (1000f / abs(vy).coerceIn(600f, 2400f))).toLong().coerceIn(80L, 190L)
@@ -612,6 +949,10 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     mainHandler.removeCallbacks(longPressRunnable)
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = null
+                    if (isSwipingRightFeed) {
+                        feedController.endInteractiveDrag(0f, snapshot.widthPx)
+                        isSwipingRightFeed = false
+                    }
                     if (isSwipingUp) {
                         overlayRoot?.animate()?.translationY(0f)?.alpha(1f)?.setDuration(160L)?.start()
                     }
@@ -726,6 +1067,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         if (isCalibrationMode) {
             updateCalibrationLabel(snapshot.profile, config)
         }
+        updateLeftEdgeVisibility(isOverlayVisible)
     }
 
     private fun applyWindowLayout(
@@ -759,8 +1101,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         val edge = leftEdgeView
         val edgeParams = leftEdgeParams
         if (edge != null && edgeParams != null) {
-            edgeParams.width = (18 * density).roundToInt()
-            edgeParams.height = (snapshot.heightPx * (prefs.leftEdgeHeightPercent / 100f)).roundToInt()
+            val maxExcludedHeightPx = (196 * density).roundToInt()
+            edgeParams.width = (26 * density).roundToInt()
+            edgeParams.height = min((snapshot.heightPx * 0.45f).roundToInt(), maxExcludedHeightPx)
             try {
                 windowManager.updateViewLayout(edge, edgeParams)
             } catch (_: Throwable) {
@@ -827,7 +1170,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         }
         pill.background = drawable
         leftEdgeView?.setBackgroundColor(
-            if (isCalibrationMode && prefs.leftEdgeFeedEnabled) Color.parseColor("#554285F4")
+            if (isCalibrationMode && prefs.leftEdgeFeedEnabled) Color.parseColor("#664285F4")
             else Color.TRANSPARENT
         )
     }
@@ -836,18 +1179,48 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         calibrationLabel?.text = "${profile.displayNameZh} ${config.widthPercent}%×${config.heightDp}dp"
     }
 
-    private fun setOverlayVisibility(visible: Boolean) {
+    private fun updateLeftEdgeVisibility(homeVisible: Boolean, isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
+        val edge = leftEdgeView ?: return
+        if (!prefs.leftEdgeFeedEnabled || pagePickerView != null) {
+            edge.visibility = View.GONE
+            return
+        }
+        val allowOnThisPage = when (prefs.feedTriggerMode) {
+            FeedTriggerMode.FIRST_HOME_PAGE -> {
+                if (!homeVisible || isMinusOne) {
+                    false
+                } else if (AccessibilityForegroundState.isConnected && prefs.customFirstPageSignature.isNotBlank()) {
+                    AccessibilityForegroundState.isOnConfirmedFirstPage
+                } else {
+                    true
+                }
+            }
+            FeedTriggerMode.MINUS_ONE_AUTO_REPLACE -> {
+                isCalibrationMode
+            }
+            FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH -> {
+                // On OEM Minus-One screen: bottom search bar is hidden, left-edge interactive pull is ACTIVE!
+                isMinusOne || isCalibrationMode
+            }
+        }
+        edge.visibility = if (allowOnThisPage) View.VISIBLE else View.GONE
+    }
+
+    private fun setOverlayVisibility(visible: Boolean, isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
         val view = overlayRoot ?: return
         if (!isOverlayAttached) return
-        leftEdgeView?.visibility = if (visible && prefs.leftEdgeFeedEnabled) View.VISIBLE else View.GONE
-        if (isOverlayVisible == visible) return
-        isOverlayVisible = visible
-        if (visible) {
+        // Bottom search bar must NEVER show on Minus-One screen
+        val showSearchBar = visible && !isMinusOne
+        updateLeftEdgeVisibility(showSearchBar, isMinusOne)
+        if (isOverlayVisible == showSearchBar) return
+        isOverlayVisible = showSearchBar
+        if (showSearchBar) {
             view.animate().cancel()
             view.translationY = 0f
             view.alpha = 1f
             view.visibility = View.VISIBLE
         } else {
+            view.animate().cancel()
             view.visibility = View.GONE
         }
     }
@@ -900,12 +1273,15 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     companion object {
         private const val CHANNEL_ID = "pixel_dock_overlay_channel"
         private const val NOTIFICATION_ID = 4101
-        private const val POLL_INTERVAL_MS = 280L
+        private const val FAST_POLL_INTERVAL_MS = 90L
+        private const val SLOW_POLL_INTERVAL_MS = 350L
+        private const val ACCESSIBILITY_HEARTBEAT_MS = 600L
         private const val IDLE_POLL_INTERVAL_MS = 1000L
 
         const val ACTION_STOP = "com.pixeldock.search.ACTION_STOP"
         const val ACTION_TOGGLE_CALIBRATION = "com.pixeldock.search.ACTION_TOGGLE_CALIBRATION"
         const val ACTION_ENTER_CALIBRATION = "com.pixeldock.search.ACTION_ENTER_CALIBRATION"
+        const val ACTION_PICK_FEED_PAGE = "com.pixeldock.search.ACTION_PICK_FEED_PAGE"
         const val ACTION_REFRESH_LAYOUT = "com.pixeldock.search.ACTION_REFRESH_LAYOUT"
 
         @Volatile
