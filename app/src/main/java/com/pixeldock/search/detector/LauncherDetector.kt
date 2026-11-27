@@ -78,7 +78,11 @@ class LauncherDetector(
 
         return when (prefs.detectionMode) {
             DetectionMode.ACCESSIBILITY -> {
-                if (AccessibilityForegroundState.isConnected && !AccessibilityForegroundState.isSystemOverlay) {
+                if (AccessibilityForegroundState.isConnected &&
+                    !AccessibilityForegroundState.isSystemOverlay &&
+                    !AccessibilityForegroundState.isAppDrawerOpen &&
+                    !AccessibilityForegroundState.isMinusOneActive
+                ) {
                     AccessibilityForegroundState.foregroundPackage in launchers
                 } else {
                     false
@@ -86,12 +90,18 @@ class LauncherDetector(
             }
             DetectionMode.USAGE_STATS -> {
                 val pkg = queryUsageStatsForeground()
+                if (LauncherGestureBus.isMinusOnePackageOrClass(pkg, "")) return false
                 pkg in launchers
             }
             DetectionMode.AUTO_SHIZUKU -> {
                 // 1. Accessibility instant state if enabled
                 if (AccessibilityForegroundState.isConnected) {
-                    if (AccessibilityForegroundState.isSystemOverlay) return false
+                    if (AccessibilityForegroundState.isSystemOverlay ||
+                        AccessibilityForegroundState.isAppDrawerOpen ||
+                        AccessibilityForegroundState.isMinusOneActive
+                    ) {
+                        return false
+                    }
                     val accPkg = AccessibilityForegroundState.foregroundPackage
                     if (accPkg.isNotBlank()) return accPkg in launchers
                 }
@@ -99,16 +109,29 @@ class LauncherDetector(
                 val shizukuPkg = shizukuManager.getForegroundPackage()
                 if (shizukuPkg != null) {
                     if (shizukuPkg == TaskMonitorUserService.SYSTEM_UI_OVERLAY) return false
+                    if (LauncherGestureBus.isMinusOnePackageOrClass(shizukuPkg, "")) return false
                     if (shizukuPkg.isNotBlank()) return shizukuPkg in launchers
                 }
                 // 3. UsageStats fallback
                 if (hasUsageStatsPermission(context)) {
                     val usagePkg = queryUsageStatsForeground()
+                    if (LauncherGestureBus.isMinusOnePackageOrClass(usagePkg, "")) return false
                     return usagePkg in launchers
                 }
                 false
             }
         }
+    }
+
+    fun isMinusOneScreenActive(): Boolean {
+        if (AccessibilityForegroundState.isConnected && AccessibilityForegroundState.isMinusOneActive) {
+            return true
+        }
+        val shizukuPkg = shizukuManager.getForegroundPackage()
+        if (!shizukuPkg.isNullOrBlank() && LauncherGestureBus.isMinusOnePackageOrClass(shizukuPkg, "")) {
+            return true
+        }
+        return false
     }
 
     fun activeEngineLabel(): String {
@@ -189,4 +212,10 @@ object AccessibilityForegroundState {
 
     @Volatile
     var isSystemOverlay: Boolean = false
+
+    @Volatile
+    var isAppDrawerOpen: Boolean = false
+
+    @Volatile
+    var isMinusOneActive: Boolean = false
 }

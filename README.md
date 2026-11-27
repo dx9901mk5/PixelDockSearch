@@ -7,40 +7,33 @@
 <a id="繁體中文說明"></a>
 ## 🇹🇼 繁體中文說明
 
-> **免 Root、不干涉原廠啟動器，於系統桌面下方常駐 Pixel 風格 Google 搜尋列，並支援桌面左側邊緣右滑開啟 Google 探索 (Feed)——專為手機、摺疊機與平板打造 6 組獨立記憶定位。**
+> **免 Root、不干涉原廠啟動器，於系統桌面下方常駐 Pixel 風格 Google 搜尋列，並提供預熱 Google Feed 卡片與原廠負一屏即時滑出動畫——專為手機、摺疊機與平板打造 6 組獨立記憶定位。**
 
-### ✨ 核心特色
+### ✨ 核心特色（v1.1.0）
 
-1. **不干涉原廠啟動器**
-   - 保留原廠啟動器的多工手勢、過渡動畫與平板／摺疊機專屬 Dock，無須改用第三方啟動器即可享有 Pixel 桌面搜尋體驗。
-   - 點擊搜尋膠囊本體開啟 Google 文字搜尋、麥克風開啟語音搜尋、右側圖示開啟 Google Lens。
-2. **手機／摺疊／平板 6 組獨立記憶定位**
-   - 依據螢幕尺寸與方向自動偵測切換，並各自記憶座標（底部距離 `Y`、左右偏移 `X`、寬度比例、高度）：
-     - 手機／摺疊外螢幕（直向 / 橫向）
-     - 摺疊展開／中螢幕（直向 / 橫向）
-     - 平板大螢幕（直向 / 橫向）
-   - 支援在桌面直接**拖曳定位**（靠近水平中心 $\pm 8\text{dp}$ 自動磁吸置中），也可於 App 內以滑桿精細微調。
-3. **Shizuku 優先 + 多引擎前景偵測**
-   - 透過 **Shizuku UserService** 即時讀取前景套件與系統遮罩狀態（開啟 App、下拉通知欄、鎖定畫面或進入最近任務時自動隱藏）。
-   - 支援自動授權 `UsageStats` 備援，以及「無障礙即時偵測」零延遲切換模式。
-4. **桌面左側邊緣右滑開啟 Google 探索 (Feed)**
-   - 僅在偵測到目前位於原廠桌面時啟用左側邊緣透明觸發條，向右滑動即可震動回饋並開啟 Google 探索 (`googleapp://discover`)。
-   - 進入任何 App 時會與搜尋列同步自動隱藏，完全不影響系統原本的側滑返回手勢。
-5. **外觀與主題**
-   - 支援 **跟隨系統 / 深色 / 淺色 / Material You 動態取色**（Android 12+）與背景不透明度調整。
-6. **固定簽章發行（支援直接覆蓋升級）**
-   - Release APK 採用固定簽章金鑰編譯，後續版本更新可直接覆蓋安裝，無須移除重裝或遺失定位設定。
+1. **極簡 App 設定介面 ＋ 桌面直覺拖曳與縮放比例**
+   - App 內僅保留權限、偵測模式與「進入桌面編輯位置與縮放比例」入口，無須在設定頁反覆微調數字。
+   - 進入桌面編輯模式後，可直接**拖曳移動位置**（靠近水平中心 $\pm 8\text{dp}$ 自動磁吸置中），並支援**左右邊緣手柄拖曳調寬**、**雙指捏合縮放**以及編輯列上的 **`－` / `＋` / `置中` / `重設` / `完成鎖定`**。
+2. **跟隨啟動器上滑進入 App 清單同步消失**
+   - 搭配無障礙即時滾動監聽與速度追蹤，當您在桌面往上滑動開啟 App 抽屜時，搜尋列會**跟著啟動器的挪動速度同步向上滑出消失**，返回桌面時自動恢復。
+3. **預熱 Google Feed ＋ 原廠負一屏滑出動畫**
+   - 服務啟動後會在背景預熱載入 Google 頁面（`WebView` 常駐待機）。
+   - **從桌面左側邊緣右滑**：頁面早已載入完畢，手指拖曳即可 1:1 順暢拉出 Google 探索卡片。
+   - **滑出原廠負一屏（vivo HiBoard / ColorOS / MIUI / Samsung Free 等）**：偵測到原廠負一屏時，立即以原生卡片滑出動畫從左側滑出已預熱的 Google Feed 覆蓋顯示，左滑或按返回鍵即可收起並回到主桌面。
+4. **手機／摺疊／平板 6 組獨立記憶定位**
+   - 自動區分手機／摺疊外螢幕、摺疊展開、平板的直／橫向共 6 種型態並各自記憶座標與比例。
+5. **Shizuku 優先 + 多引擎前景偵測**
+   - 透過 **Shizuku UserService** 即時讀取前景套件與系統遮罩狀態（開啟 App、通知欄、鎖定畫面或進入最近任務時自動隱藏），支援 `UsageStats` 備援與「無障礙即時偵測」。
+6. **內建 GitHub 自動更新與固定簽章覆蓋安裝**
+   - App 內建版本檢查，啟動或手動點擊檢查時若發現 GitHub 新版本即彈窗提示，支援**進度條自動下載**並直接呼叫系統安裝程式覆蓋升級（採固定簽章金鑰，無須移除重裝）。
 
 ### 📦 下載與安裝步驟
 
 1. 前往 [**Releases**](https://github.com/dx9901mk5/PixelDockSearch/releases/latest) 下載最新 **`PixelDockSearch-v*.apk`** 並安裝（需 Android 8.0 / API 26 以上）。
 2. 開啟 **PixelDock 搜尋列**：
-   - 點擊「**懸浮窗權限**」授予顯示在其他應用程式上層權限。
-   - 點擊「**授權 Shizuku**」（請先確認 Shizuku App 已啟動並完成無線除錯配對）。
-   - 開啟「**啟用桌面 Google 搜尋列**」。
-3. **分開校準各螢幕型態位置**：
-   - 在手機／摺疊合起狀態下，點擊「**前往桌面拖曳定位**」，將搜尋列拖至頁碼指示點與 Dock 之間，點擊「**完成鎖定**」。
-   - 展開摺疊機、旋轉橫向或切換至平板後，再進行一次拖曳定位（或長按搜尋列進入拖曳），App 會自動切換並獨立記憶該組座標。
+   - 授予「**懸浮窗權限**」與「**授權 Shizuku**」。
+   - 若要體驗「上滑跟隨 App 清單同步消失」與「原廠負一屏即時切換預熱 Google Feed」，建議開啟「**無障礙設定**」並選擇無障礙即時偵測。
+3. 點擊「**進入桌面編輯位置與縮放比例**」，在手機／展開／平板狀態下分別拖曳與縮放至理想位置即可。
 
 ### 🛠️ 自行建置（Build from Source）
 
@@ -68,40 +61,33 @@
 <a id="english"></a>
 ## 🇺🇸 English
 
-> **A rootless, lightweight Android utility that pins a Pixel-style Google Search bar above your stock launcher's dock and adds a left-edge swipe gesture to open Google Discover (Feed)—with 6 independent position/size profiles across phones, foldables, and tablets.**
+> **A rootless, lightweight Android utility that pins a Pixel-style Google Search bar above your stock launcher's dock and provides a pre-warmed Google Feed card with native slide-out animation—with 6 independent position & scale profiles across phones, foldables, and tablets.**
 
-### ✨ Key Features
+### ✨ Key Features (v1.1.0)
 
-1. **Zero Interference with Stock Launchers**
-   - Keep your OEM launcher's native animations, gesture navigation, and tablet/foldable multi-icon Dock—no third-party launcher replacement required.
-   - Tap the pill for Google text search, the mic icon for voice search, or the Lens icon for Google Lens.
-2. **6-Slot Form-Factor & Posture Memory**
-   - Automatically detects display dimensions and orientation, storing independent layouts (`bottomMarginDp`, `xOffsetDp`, `widthPercent`, `heightDp`) for:
-     - Phone / Foldable Cover Screen (Portrait & Landscape)
-     - Foldable Unfolded / Medium Screen (Portrait & Landscape)
-     - Tablet Large Screen (Portrait & Landscape)
-   - Drag directly on the home screen (with horizontal center magnetic snapping within $\pm 8\text{dp}$) or fine-tune with sliders in the app.
-3. **Shizuku-First + Multi-Engine Foreground Detection**
-   - Uses a **Shizuku UserService** to detect the foreground package and system overlays (automatically hiding the bar when inside apps, notification shade, lock screen, or recents).
-   - Includes automatic `UsageStats` fallback and an optional Accessibility Service mode for zero-latency switching.
-4. **Left-Edge Swipe for Google Discover (Feed)**
-   - Renders a subtle edge trigger strip **only while on the stock home screen**; swipe right to trigger haptic feedback and open Google Discover (`googleapp://discover`).
-   - Automatically hides inside all apps so it never interferes with system back-swipe gestures.
-5. **Theming & Appearance**
-   - Supports **System / Dark / Light / Material You Dynamic Color** (Android 12+) and adjustable background opacity.
-6. **Fixed Cryptographic Signing**
-   - Official APK releases are signed with a **fixed signing key**, allowing future updates to install directly over previous versions without uninstalling or losing saved positions.
+1. **Minimalist App UI + Direct Desktop Drag & Proportional Scaling**
+   - No cluttered sliders inside the app—just one button to **Edit Position & Scale on Home Screen**.
+   - In desktop edit mode, drag to position (with $\pm 8\text{dp}$ magnetic center snap), drag the **left/right resize handles**, **pinch-to-zoom**, or tap **`－` / `＋` / `Center` / `Reset` / `Lock`** right on the floating bar.
+2. **Velocity-Matched Upward Slide-Out with App Drawer**
+   - Tracks launcher vertical scroll events and swipe velocity in real time so the search bar **slides upward and fades out in sync with your App Drawer gesture**, then returns smoothly on home.
+3. **Pre-Warmed Google Feed + OEM Minus-One Screen Slide-Out Animation**
+   - Pre-warms a live Google `WebView` in memory right after service start so content is **already loaded before you swipe**.
+   - **Left-Edge Interactive Pull-Out**: Dragging from the left edge pulls the pre-loaded Google Feed card out 1:1 with your finger.
+   - **OEM Minus-One Screen Takeover**: When swiping into your stock launcher's Minus-One screen (vivo HiBoard, ColorOS/Oplus, MIUI, Samsung Free, etc.), the pre-warmed Google Feed card slides out from the left with a native card animation; swipe left or press Back to return cleanly to your home screen.
+4. **6-Slot Form-Factor & Posture Memory**
+   - Independently stores position and scale across Phone/Cover, Foldable Unfolded, and Tablet in both Portrait & Landscape orientations.
+5. **Shizuku-First + Multi-Engine Foreground Detection**
+   - Uses a **Shizuku UserService** to hide the overlay in apps, notification shade, lock screen, and recents, with `UsageStats` fallback and Accessibility instant detection.
+6. **Built-in GitHub Auto-Updater + Fixed Signing Key**
+   - Automatically checks GitHub Releases for newer versions, prompts with release notes, **downloads the APK with a live progress bar**, and launches the system installer directly (signed with a fixed key for seamless overwrite upgrades).
 
 ### 📦 Download & Setup
 
 1. Download the latest **`PixelDockSearch-v*.apk`** from [**Releases**](https://github.com/dx9901mk5/PixelDockSearch/releases/latest) (requires Android 8.0 / API 26+).
 2. Open **PixelDock Search**:
-   - Grant **Display over other apps** permission.
-   - Tap **Authorize Shizuku** (ensure Shizuku is running).
-   - Enable **Home Screen Google Search Bar**.
-3. **Calibrate Each Posture Separately**:
-   - While folded / on phone, tap **Go to Home & Drag to Position**, place the bar between your page indicator dots and dock, then tap **Lock Position**.
-   - Unfold your device or rotate to landscape/tablet and calibrate again—each posture saves its own coordinates independently.
+   - Grant **Display over other apps** and **Authorize Shizuku**.
+   - Enable **Accessibility Service** if you want real-time App Drawer scroll-following and instant OEM Minus-One screen switching.
+3. Tap **Edit Position & Scale on Home Screen** to drag and resize each posture directly on your desktop.
 
 ### 🛠️ Build from Source
 

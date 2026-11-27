@@ -18,7 +18,9 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
             windowOutput.contains("StatusBar") ||
             windowOutput.contains("Bouncer") ||
             windowOutput.contains("Keyguard") ||
-            windowOutput.contains("Recents")
+            windowOutput.contains("Recents") ||
+            windowOutput.contains("AllApps") ||
+            windowOutput.contains("AppDrawer")
         ) {
             return SYSTEM_UI_OVERLAY
         }

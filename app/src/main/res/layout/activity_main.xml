@@ -23,7 +23,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:alpha="0.75"
-            android:text="不干涉原廠啟動器，於桌面下方常駐 Pixel 風格 Google 搜尋列，並依手機／摺疊／平板型態各自記憶定位"
+            android:text="不干涉原廠啟動器，於桌面常駐 Pixel 風格 Google 搜尋列，並依手機／摺疊／平板各自記憶定位"
             android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
 
         <!-- 狀態與權限卡片 -->
@@ -82,7 +82,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 主開關與桌面拖曳定位 -->
+        <!-- 主開關與桌面編輯入口 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -107,139 +107,22 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="桌面左側邊緣右滑開啟 Google 探索 (Feed)" />
+                    android:text="預熱 Google Feed（原廠負一屏／左側滑出即刻顯示）" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnGoHomeCalibrate"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="前往桌面拖曳定位（目前螢幕型態）" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- 目前螢幕型態微調 -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            app:cardCornerRadius="16dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/tvActiveProfileTitle"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="目前型態定位微調"
-                        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                        android:textStyle="bold" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnResetProfile"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="重設" />
-                </LinearLayout>
+                    android:text="進入桌面編輯位置與縮放比例" />
 
                 <TextView
-                    android:id="@+id/tvBottomMarginLabel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="底部距離 Y：112 dp" />
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderBottomMargin"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:stepSize="1"
-                    android:valueFrom="0"
-                    android:valueTo="300" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/tvXOffsetLabel"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="左右偏移 X：0 dp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCenterX"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="置中" />
-                </LinearLayout>
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderXOffset"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:stepSize="1"
-                    android:valueFrom="-200"
-                    android:valueTo="200" />
-
-                <TextView
-                    android:id="@+id/tvWidthLabel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="寬度比例：86%" />
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderWidthPercent"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:stepSize="1"
-                    android:valueFrom="25"
-                    android:valueTo="98" />
-
-                <TextView
-                    android:id="@+id/tvHeightLabel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="高度：48 dp" />
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderHeightDp"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:stepSize="1"
-                    android:valueFrom="36"
-                    android:valueTo="64" />
-
-                <TextView
-                    android:id="@+id/tvAlphaLabel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="背景不透明度：90%" />
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderAlpha"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:stepSize="1"
-                    android:valueFrom="20"
-                    android:valueTo="100" />
+                    android:layout_marginTop="6dp"
+                    android:alpha="0.72"
+                    android:text="進入桌面後可直接拖曳位置、拉動左右邊緣手柄或雙指／＋－按鈕縮放比例。"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -286,7 +169,7 @@
                         android:id="@+id/rbAccessibility"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="無障礙即時偵測（零延遲切換）" />
+                        android:text="無障礙即時偵測（支援上滑跟隨與負一屏切換）" />
                 </RadioGroup>
 
                 <LinearLayout
@@ -359,7 +242,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="長按桌面搜尋列可進入拖曳定位" />
+                    android:text="長按桌面搜尋列可進入編輯與縮放" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/switchAutoBoot"
@@ -383,20 +266,106 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="各型態獨立記憶座標總覽"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="各型態獨立記憶座標總覽"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnResetProfile"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="重設目前型態" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvProfilesOverview"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="6dp"
                     android:lineSpacingExtra="5dp"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 版本更新（GitHub） -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="版本更新 (GitHub)"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvUpdateStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+
+                <com.google.android.material.progressindicator.LinearProgressIndicator
+                    android:id="@+id/progressUpdateDownload"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:max="100"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvDownloadProgress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCheckUpdate"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:text="檢查更新" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDownloadUpdate"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:text="下載並安裝"
+                        android:visibility="gone" />
+                </LinearLayout>
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

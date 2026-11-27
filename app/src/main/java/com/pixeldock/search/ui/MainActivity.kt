@@ -8,21 +8,26 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.pixeldock.search.BuildConfig
 import com.pixeldock.search.R
 import com.pixeldock.search.data.DetectionMode
 import com.pixeldock.search.data.PrefsRepository
-import com.pixeldock.search.data.ProfileLayoutConfig
 import com.pixeldock.search.data.ThemeMode
 import com.pixeldock.search.databinding.ActivityMainBinding
 import com.pixeldock.search.detector.LauncherDetector
 import com.pixeldock.search.model.DisplayProfile
 import com.pixeldock.search.service.OverlaySearchService
 import com.pixeldock.search.shizuku.ShizukuManager
+import com.pixeldock.search.updater.GitHubUpdateManager
+import java.io.File
+import java.util.Locale
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
@@ -31,7 +36,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var shizukuManager: ShizukuManager
     private lateinit var detector: LauncherDetector
 
+    private val bgExecutor = Executors.newSingleThreadExecutor()
     private var suppressListeners = false
+    private var latestRelease: GitHubUpdateManager.ReleaseInfo? = null
+    private var pendingInstallApk: File? = null
+    private var isDownloadingUpdate = false
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -59,12 +68,21 @@ class MainActivity : AppCompatActivity() {
         setupListeners()
         syncControlsFromPrefs()
         refreshStatusUi()
+        checkForUpdates(autoPrompt = true)
     }
 
     override fun onResume() {
         super.onResume()
         syncControlsFromPrefs()
         refreshStatusUi()
+
+        val pendingApk = pendingInstallApk
+        if (pendingApk != null && pendingApk.exists()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+                pendingInstallApk = null
+                GitHubUpdateManager.installApk(this, pendingApk)
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -75,6 +93,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         shizukuManager.stop()
+        bgExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -151,38 +170,10 @@ class MainActivity : AppCompatActivity() {
         binding.btnResetProfile.setOnClickListener {
             val snapshot = DisplayProfile.fromContext(this)
             prefs.resetLayout(snapshot.profile)
-            syncControlsFromPrefs()
             notifyOverlayRefresh()
             refreshStatusUi()
             Toast.makeText(this, "已重設 ${snapshot.profile.displayNameZh}", Toast.LENGTH_SHORT).show()
         }
-
-        binding.btnCenterX.setOnClickListener {
-            binding.sliderXOffset.value = 0f
-        }
-
-        val sliderChange: () -> Unit = {
-            if (!suppressListeners) {
-                val snapshot = DisplayProfile.fromContext(this)
-                val updated = ProfileLayoutConfig(
-                    bottomMarginDp = binding.sliderBottomMargin.value.toInt(),
-                    xOffsetDp = binding.sliderXOffset.value.toInt(),
-                    widthPercent = binding.sliderWidthPercent.value.toInt(),
-                    heightDp = binding.sliderHeightDp.value.toInt()
-                )
-                prefs.saveLayout(snapshot.profile, updated)
-                prefs.bgAlpha = binding.sliderAlpha.value.toInt()
-                updateSliderLabels(updated, prefs.bgAlpha)
-                notifyOverlayRefresh()
-                refreshProfilesOverview(snapshot.profile)
-            }
-        }
-
-        binding.sliderBottomMargin.addOnChangeListener { _, _, _ -> sliderChange() }
-        binding.sliderXOffset.addOnChangeListener { _, _, _ -> sliderChange() }
-        binding.sliderWidthPercent.addOnChangeListener { _, _, _ -> sliderChange() }
-        binding.sliderHeightDp.addOnChangeListener { _, _, _ -> sliderChange() }
-        binding.sliderAlpha.addOnChangeListener { _, _, _ -> sliderChange() }
 
         binding.rgDetectionMode.setOnCheckedChangeListener { _, checkedId ->
             if (suppressListeners) return@setOnCheckedChangeListener
@@ -228,19 +219,126 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        binding.btnCheckUpdate.setOnClickListener {
+            checkForUpdates(autoPrompt = true)
+        }
+
+        binding.btnDownloadUpdate.setOnClickListener {
+            latestRelease?.let { startDownloadAndInstall(it) }
+        }
+
         binding.tvAboutInfo.text = buildString {
             appendLine("PixelDock Search v${BuildConfig.VERSION_NAME}")
             appendLine("開發者 / Developer：dx9901mk5 (dx9901mk5@gmail.com)")
-            appendLine("免 Root、不干涉原廠啟動器，常駐 Pixel 風格 Google 搜尋列與桌面左側 Google 探索手勢，依手機／摺疊／平板獨立記憶定位。採用固定簽章，後續版本可直接覆蓋升級。")
-            append("Rootless Pixel-style Google Search Bar & Left-Edge Discover swipe on stock launchers with per-form-factor position memory. Signed with a fixed key for seamless overwrite updates.")
+            appendLine("免 Root、不干涉原廠啟動器，常駐 Pixel 風格 Google 搜尋列與預熱 Google Feed，依手機／摺疊／平板獨立記憶定位。採用固定簽章，後續版本可直接覆蓋升級。")
+            append("Rootless Pixel-style Google Search Bar & pre-warmed Google Feed on stock launchers with per-form-factor position memory. Signed with a fixed key for seamless overwrite updates.")
         }
 
         binding.btnOpenGithubRepo.setOnClickListener {
-            openExternalUrl("https://github.com/dx9901mk5/PixelDockSearch")
+            openExternalUrl(GitHubUpdateManager.REPO_URL)
         }
 
         binding.btnOpenGithubProfile.setOnClickListener {
-            openExternalUrl("https://github.com/dx9901mk5")
+            openExternalUrl("https://github.com/${GitHubUpdateManager.REPO_OWNER}")
+        }
+    }
+
+    private fun checkForUpdates(autoPrompt: Boolean) {
+        if (isDownloadingUpdate) return
+        binding.tvUpdateStatus.text = "目前版本：v${BuildConfig.VERSION_NAME}（正在檢查 GitHub 最新版本…）"
+        binding.btnCheckUpdate.isEnabled = false
+
+        bgExecutor.execute {
+            val result = GitHubUpdateManager.checkLatestRelease(BuildConfig.VERSION_NAME)
+            runOnUiThread {
+                binding.btnCheckUpdate.isEnabled = true
+                result.onSuccess { release ->
+                    if (release != null) {
+                        latestRelease = release
+                        binding.tvUpdateStatus.text = "發現新版本：v${release.versionName}（目前為 v${BuildConfig.VERSION_NAME}）"
+                        binding.btnDownloadUpdate.visibility = View.VISIBLE
+                        if (autoPrompt && !isFinishing && !isDestroyed) {
+                            showUpdateDialog(release)
+                        }
+                    } else {
+                        latestRelease = null
+                        binding.btnDownloadUpdate.visibility = View.GONE
+                        binding.tvUpdateStatus.text = "目前已是最新版本：v${BuildConfig.VERSION_NAME}"
+                    }
+                }.onFailure { err ->
+                    binding.tvUpdateStatus.text = "目前版本：v${BuildConfig.VERSION_NAME}（檢查更新失敗：${err.message ?: "網路錯誤"}）"
+                }
+            }
+        }
+    }
+
+    private fun showUpdateDialog(release: GitHubUpdateManager.ReleaseInfo) {
+        val summary = release.notes.trim().take(360).ifEmpty {
+            "發現新版本 v${release.versionName}，支援固定簽章直接覆蓋升級。"
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("發現新版本 v${release.versionName}")
+            .setMessage(summary)
+            .setPositiveButton("下載並安裝") { _, _ ->
+                startDownloadAndInstall(release)
+            }
+            .setNeutralButton("前往 GitHub") { _, _ ->
+                openExternalUrl(release.releaseUrl)
+            }
+            .setNegativeButton("稍後", null)
+            .show()
+    }
+
+    private fun startDownloadAndInstall(release: GitHubUpdateManager.ReleaseInfo) {
+        if (isDownloadingUpdate) return
+        isDownloadingUpdate = true
+        binding.btnCheckUpdate.isEnabled = false
+        binding.btnDownloadUpdate.isEnabled = false
+        binding.progressUpdateDownload.visibility = View.VISIBLE
+        binding.progressUpdateDownload.isIndeterminate = true
+        binding.tvDownloadProgress.visibility = View.VISIBLE
+        binding.tvDownloadProgress.text = "正在準備下載 ${release.apkName}…"
+
+        bgExecutor.execute {
+            val result = GitHubUpdateManager.downloadApk(this, release) { downloaded, total, pct ->
+                runOnUiThread {
+                    if (pct >= 0 && total > 0) {
+                        binding.progressUpdateDownload.isIndeterminate = false
+                        binding.progressUpdateDownload.progress = pct
+                        val dlMb = String.format(Locale.US, "%.2f", downloaded / (1024f * 1024f))
+                        val totalMb = String.format(Locale.US, "%.2f", total / (1024f * 1024f))
+                        binding.tvDownloadProgress.text = "下載中 $pct%（$dlMb MB / $totalMb MB）"
+                    } else {
+                        binding.progressUpdateDownload.isIndeterminate = true
+                        val dlMb = String.format(Locale.US, "%.2f", downloaded / (1024f * 1024f))
+                        binding.tvDownloadProgress.text = "下載中（已接收 $dlMb MB）"
+                    }
+                }
+            }
+
+            runOnUiThread {
+                isDownloadingUpdate = false
+                binding.btnCheckUpdate.isEnabled = true
+                binding.btnDownloadUpdate.isEnabled = true
+
+                result.onSuccess { apkFile ->
+                    binding.progressUpdateDownload.isIndeterminate = false
+                    binding.progressUpdateDownload.progress = 100
+                    binding.tvDownloadProgress.text = "下載完成，正在啟動安裝程式…"
+                    val started = GitHubUpdateManager.installApk(this, apkFile)
+                    if (!started) {
+                        pendingInstallApk = apkFile
+                        Toast.makeText(
+                            this,
+                            "請允許此應用程式安裝未知應用程式，返回後將自動繼續安裝",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }.onFailure { err ->
+                    binding.progressUpdateDownload.visibility = View.GONE
+                    binding.tvDownloadProgress.text = "下載失敗：${err.message ?: "請稍後再試"}"
+                }
+            }
         }
     }
 
@@ -254,18 +352,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncControlsFromPrefs() {
         suppressListeners = true
-        val snapshot = DisplayProfile.fromContext(this)
-        val layout = prefs.getLayout(snapshot.profile)
-
         binding.switchMasterService.isChecked = prefs.serviceEnabled && OverlaySearchService.isRunning
-        binding.tvActiveProfileTitle.text = "定位微調：${snapshot.profile.displayNameZh}"
-
-        binding.sliderBottomMargin.value = layout.bottomMarginDp.toFloat().coerceIn(0f, 300f)
-        binding.sliderXOffset.value = layout.xOffsetDp.toFloat().coerceIn(-200f, 200f)
-        binding.sliderWidthPercent.value = layout.widthPercent.toFloat().coerceIn(25f, 98f)
-        binding.sliderHeightDp.value = layout.heightDp.toFloat().coerceIn(36f, 64f)
-        binding.sliderAlpha.value = prefs.bgAlpha.toFloat().coerceIn(20f, 100f)
-        updateSliderLabels(layout, prefs.bgAlpha)
 
         when (prefs.detectionMode) {
             DetectionMode.AUTO_SHIZUKU -> binding.rgDetectionMode.check(R.id.rbAutoShizuku)
@@ -284,14 +371,6 @@ class MainActivity : AppCompatActivity() {
         binding.switchAutoBoot.isChecked = prefs.autoStartOnBoot
         binding.switchLeftEdgeFeed.isChecked = prefs.leftEdgeFeedEnabled
         suppressListeners = false
-    }
-
-    private fun updateSliderLabels(layout: ProfileLayoutConfig, alpha: Int) {
-        binding.tvBottomMarginLabel.text = "底部距離 Y：${layout.bottomMarginDp} dp"
-        binding.tvXOffsetLabel.text = "左右偏移 X：${layout.xOffsetDp} dp"
-        binding.tvWidthLabel.text = "寬度比例：${layout.widthPercent}%"
-        binding.tvHeightLabel.text = "高度：${layout.heightDp} dp"
-        binding.tvAlphaLabel.text = "背景不透明度：$alpha%"
     }
 
     private fun refreshStatusUi() {
