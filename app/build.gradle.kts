@@ -11,8 +11,8 @@ android {
         applicationId = "com.pixeldock.search"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.4.0"
+        versionCode = 9
+        versionName = "1.5.0"
     }
 
     signingConfigs {
@@ -35,6 +35,8 @@ android {
             }
         }
         release {
+            // Required by Google App's DrawerOverlayService (ILauncherOverlay) for non-system apps
+            isDebuggable = true
             isMinifyEnabled = false
             if (file("pixeldocksearch-signing.p12").exists()) {
                 signingConfig = signingConfigs.getByName("fixed")

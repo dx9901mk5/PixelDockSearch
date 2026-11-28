@@ -6,4 +6,15 @@
         <item name="colorPrimaryContainer">#D2E3FC</item>
         <item name="colorOnPrimaryContainer">#041E49</item>
     </style>
+
+    <style name="Theme.PixelDockSearch.TransparentFeed" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 </resources>

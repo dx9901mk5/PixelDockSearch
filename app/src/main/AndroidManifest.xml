@@ -20,6 +20,9 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <intent>
+            <action android:name="com.android.launcher3.WINDOW_OVERLAY" />
+        </intent>
     </queries>
 
     <application
@@ -46,6 +49,15 @@
             android:exported="false"
             android:launchMode="singleTop"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
+            android:name=".feed.GoogleFeedOverlayActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity="com.pixeldock.search.feedhost"
+            android:theme="@style/Theme.PixelDockSearch.TransparentFeed" />
 
         <service
             android:name=".service.OverlaySearchService"

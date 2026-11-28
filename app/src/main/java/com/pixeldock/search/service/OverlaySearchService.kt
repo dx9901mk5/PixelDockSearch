@@ -48,6 +48,7 @@ import com.pixeldock.search.data.ThemeMode
 import com.pixeldock.search.detector.AccessibilityForegroundState
 import com.pixeldock.search.detector.LauncherDetector
 import com.pixeldock.search.detector.LauncherGestureBus
+import com.pixeldock.search.feed.NativeGoogleFeedBridge
 import com.pixeldock.search.launcher.GoogleIntentLauncher
 import com.pixeldock.search.model.DisplayProfile
 import com.pixeldock.search.shizuku.ITouchEventCallback
@@ -265,7 +266,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                             prefs.feedTriggerMode == FeedTriggerMode.MINUS_ONE_AUTO_REPLACE &&
                             !feedController.isOverlayShowing()
                         ) {
-                            feedController.slideInFromLeft(returnHomeOnClose = true)
+                            if (!(prefs.feedLaunchNativeGoogleApp && NativeGoogleFeedBridge.openImmediately(this@OverlaySearchService))) {
+                                feedController.slideInFromLeft(returnHomeOnClose = true)
+                            }
                         }
                         if (!isHiddenByDrawer && !isHiddenByPopup) {
                             setOverlayVisibility(show, isMinusOne = minusOne)
@@ -352,6 +355,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         if (Settings.canDrawOverlays(this)) {
             createAndAttachOverlay()
             if (prefs.leftEdgeFeedEnabled || prefs.searchBarSwipeFeedEnabled) {
+                NativeGoogleFeedBridge.prewarm(this)
                 feedController.prewarm()
             }
         }
@@ -418,6 +422,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         }
         shizukuManager.setTouchCallback(null)
         shizukuManager.stop()
+        NativeGoogleFeedBridge.unbind()
         feedController.destroy()
         detachOverlay()
         bgExecutor.shutdownNow()
@@ -526,7 +531,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         setOverlayVisibility(false, isMinusOne = true)
         if (!prefs.leftEdgeFeedEnabled) return
         if (prefs.feedTriggerMode != FeedTriggerMode.MINUS_ONE_AUTO_REPLACE) return
-        feedController.slideInFromLeft(returnHomeOnClose = true)
+        if (!(prefs.feedLaunchNativeGoogleApp && NativeGoogleFeedBridge.openImmediately(this))) {
+            feedController.slideInFromLeft(returnHomeOnClose = true)
+        }
     }
 
     private fun animateSlideOutUpward(durationMs: Long = 160L) {
@@ -932,6 +939,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         var downX = 0f
         var draggingFeed = false
+        var usingNativeOverlay = false
         val dragStartThreshold = 10f * density
 
         edge.setOnTouchListener { v, event ->
@@ -940,6 +948,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 MotionEvent.ACTION_DOWN -> {
                     downX = event.rawX
                     draggingFeed = false
+                    usingNativeOverlay = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -947,19 +956,34 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     if (!draggingFeed && dx > dragStartThreshold) {
                         draggingFeed = true
                         v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        feedController.beginInteractiveDrag(snap.widthPx)
+                        usingNativeOverlay = prefs.feedLaunchNativeGoogleApp &&
+                            NativeGoogleFeedBridge.beginInteractiveDrag(this)
+                        if (!usingNativeOverlay) {
+                            feedController.beginInteractiveDrag(snap.widthPx)
+                        }
                     }
                     if (draggingFeed) {
-                        feedController.updateInteractiveDrag(event.rawX, snap.widthPx)
+                        if (usingNativeOverlay) {
+                            val progress = (event.rawX / snap.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            NativeGoogleFeedBridge.updateInteractiveDrag(progress)
+                        } else {
+                            feedController.updateInteractiveDrag(event.rawX, snap.widthPx)
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (draggingFeed) {
-                        // Strict 50% rule: finger must pass halfway across screen to open; otherwise glides back
-                        feedController.endInteractiveDrag(event.rawX, snap.widthPx)
+                        if (usingNativeOverlay) {
+                            val progress = (event.rawX / snap.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            NativeGoogleFeedBridge.endInteractiveDrag(progress)
+                        } else {
+                            // Strict 50% rule: finger must pass halfway across screen to open; otherwise glides back
+                            feedController.endInteractiveDrag(event.rawX, snap.widthPx)
+                        }
                     }
                     draggingFeed = false
+                    usingNativeOverlay = false
                     true
                 }
                 else -> false
@@ -1014,6 +1038,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         var isDragging = false
         var isSwipingUp = false
         var isSwipingRightFeed = false
+        var usingNativeOverlayOnPill = false
         var longPressTriggered = false
         var pillVelocityTracker: VelocityTracker? = null
 
@@ -1093,7 +1118,11 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                             // Fig 2: Right-swipe directly on the Google Search Bar pulls out Google Feed 1:1
                             isSwipingRightFeed = true
                             v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                            feedController.beginInteractiveDrag(snapshot.widthPx)
+                            usingNativeOverlayOnPill = prefs.feedLaunchNativeGoogleApp &&
+                                NativeGoogleFeedBridge.beginInteractiveDrag(this)
+                            if (!usingNativeOverlayOnPill) {
+                                feedController.beginInteractiveDrag(snapshot.widthPx)
+                            }
                         } else if (dy < -touchSlop && abs(dy) > abs(dx) * 1.2f) {
                             isSwipingUp = true
                         }
@@ -1113,7 +1142,12 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         updateCalibrationLabel(snapshot.profile, updated)
                     } else if (isSwipingRightFeed) {
                         val revealPx = ((event.rawX - downRawX) * 1.25f).coerceIn(0f, snapshot.widthPx.toFloat())
-                        feedController.updateInteractiveDrag(revealPx, snapshot.widthPx)
+                        if (usingNativeOverlayOnPill) {
+                            val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            NativeGoogleFeedBridge.updateInteractiveDrag(progress)
+                        } else {
+                            feedController.updateInteractiveDrag(revealPx, snapshot.widthPx)
+                        }
                     } else if (!isCalibrationMode && isSwipingUp) {
                         val root = overlayRoot
                         val upOffset = (-dy).coerceAtLeast(0f)
@@ -1133,9 +1167,15 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
                     if (isSwipingRightFeed) {
                         val revealPx = ((event.rawX - downRawX) * 1.25f).coerceIn(0f, snapshot.widthPx.toFloat())
-                        // Strict 50% rule: card must pass halfway across screen to open; otherwise glides back
-                        feedController.endInteractiveDrag(revealPx, snapshot.widthPx)
+                        if (usingNativeOverlayOnPill) {
+                            val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            NativeGoogleFeedBridge.endInteractiveDrag(progress)
+                        } else {
+                            // Strict 50% rule: card must pass halfway across screen to open; otherwise glides back
+                            feedController.endInteractiveDrag(revealPx, snapshot.widthPx)
+                        }
                         isSwipingRightFeed = false
+                        usingNativeOverlayOnPill = false
                     } else if (isSwipingUp) {
                         val dy = event.rawY - downRawY
                         if (dy < -48f * density || vy < -600f) {
@@ -1165,8 +1205,13 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = null
                     if (isSwipingRightFeed) {
-                        feedController.endInteractiveDrag(0f, snapshot.widthPx)
+                        if (usingNativeOverlayOnPill) {
+                            NativeGoogleFeedBridge.endInteractiveDrag(0f)
+                        } else {
+                            feedController.endInteractiveDrag(0f, snapshot.widthPx)
+                        }
                         isSwipingRightFeed = false
+                        usingNativeOverlayOnPill = false
                     }
                     if (isSwipingUp) {
                         overlayRoot?.animate()?.translationY(0f)?.alpha(1f)?.setDuration(160L)?.start()

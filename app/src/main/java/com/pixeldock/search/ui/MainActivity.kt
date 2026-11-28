@@ -22,6 +22,7 @@ import com.pixeldock.search.data.PrefsRepository
 import com.pixeldock.search.data.ThemeMode
 import com.pixeldock.search.databinding.ActivityMainBinding
 import com.pixeldock.search.detector.LauncherDetector
+import com.pixeldock.search.feed.NativeGoogleFeedBridge
 import com.pixeldock.search.model.DisplayProfile
 import com.pixeldock.search.service.OverlaySearchService
 import com.pixeldock.search.shizuku.ShizukuManager
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestNotificationPermissionIfNeeded()
+        NativeGoogleFeedBridge.prewarm(this)
         setupListeners()
         syncControlsFromPrefs()
         refreshStatusUi()
@@ -438,6 +440,7 @@ class MainActivity : AppCompatActivity() {
             appendLine("• 服務狀態：${if (OverlaySearchService.isRunning) "運作中" else "已停止"}")
             appendLine("• 懸浮窗權限：${if (hasOverlay) "已授予" else "尚未授予"}")
             appendLine("• Shizuku 狀態：$shizukuStatus")
+            appendLine("• 原生 Pixel Feed：${NativeGoogleFeedBridge.statusLabel()}")
             appendLine("• 偵測引擎：${detector.activeEngineLabel()}")
             appendLine("• 原廠桌面：$defaultLauncher")
             append("• 目前型態：${snapshot.profile.displayNameZh} (${snapshot.widthDp}x${snapshot.heightDp} dp)")
