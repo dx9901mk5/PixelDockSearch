@@ -111,6 +111,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     private var isHiddenByPopup = false
     private var drawerScrollOffsetPx = 0f
     private var isTouchDraggingDrawerUp = false
+    private var isPillTouchActive = false
+    private var isPassiveFirstPageFeedDragging = false
+    private var usingNativeOverlayOnPassiveSwipe = false
     private var lastSnapshotCaptureMs = 0L
     private var lastA11yGuardMs = 0L
     private var currentSnapshot: DisplayProfile.DisplayMetricsSnapshot? = null
@@ -120,7 +123,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             mainHandler.post {
                 if (isCalibrationMode || !isOverlayAttached || !isOverlayVisible ||
                     isHiddenByPopup || isHiddenByDrawer || feedController.isOverlayShowing() ||
-                    pagePickerView != null
+                    pagePickerView != null || isPassiveFirstPageFeedDragging
                 ) {
                     return@post
                 }
@@ -158,6 +161,61 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         ?.setInterpolator(drawerInterpolator)
                         ?.start()
                 }
+            }
+        }
+
+        override fun onRightSwipe(dragRightPx: Int, startXPermille: Int) {
+            mainHandler.post {
+                if (isCalibrationMode || !isOverlayAttached || !isOverlayVisible ||
+                    isHiddenByPopup || isHiddenByDrawer || pagePickerView != null ||
+                    isPillTouchActive || isTouchDraggingDrawerUp
+                ) {
+                    return@post
+                }
+                if (!prefs.leftEdgeFeedEnabled || prefs.feedTriggerMode != FeedTriggerMode.FIRST_HOME_PAGE) {
+                    return@post
+                }
+                // Only trigger passive first-page swipe when on confirmed First Home Page and no app was clicked
+                if (AccessibilityForegroundState.isConnected && !AccessibilityForegroundState.isOnConfirmedFirstPage) {
+                    return@post
+                }
+                if (startXPermille !in 25..780) return@post
+
+                val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
+                val revealPx = (dragRightPx * 1.45f).coerceIn(0f, snapshot.widthPx.toFloat())
+                val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+
+                if (!isPassiveFirstPageFeedDragging) {
+                    if (feedController.isOverlayShowing()) return@post
+                    isPassiveFirstPageFeedDragging = true
+                    usingNativeOverlayOnPassiveSwipe = prefs.feedLaunchNativeGoogleApp &&
+                        NativeGoogleFeedBridge.beginInteractiveDrag(this@OverlaySearchService)
+                    if (!usingNativeOverlayOnPassiveSwipe) {
+                        feedController.beginInteractiveDrag(snapshot.widthPx)
+                    }
+                }
+
+                if (usingNativeOverlayOnPassiveSwipe) {
+                    NativeGoogleFeedBridge.updateInteractiveDrag(progress)
+                } else {
+                    feedController.updateInteractiveDrag(revealPx, snapshot.widthPx)
+                }
+            }
+        }
+
+        override fun onRightSwipeEnd(dragRightPx: Int, velocityPxPerSec: Int) {
+            mainHandler.post {
+                if (!isPassiveFirstPageFeedDragging) return@post
+                isPassiveFirstPageFeedDragging = false
+                val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
+                val revealPx = (dragRightPx * 1.45f).coerceIn(0f, snapshot.widthPx.toFloat())
+                val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                if (usingNativeOverlayOnPassiveSwipe) {
+                    NativeGoogleFeedBridge.endInteractiveDrag(progress, velocityX = velocityPxPerSec.toFloat())
+                } else {
+                    feedController.endInteractiveDrag(revealPx, snapshot.widthPx)
+                }
+                usingNativeOverlayOnPassiveSwipe = false
             }
         }
     }
@@ -1117,6 +1175,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    isPillTouchActive = true
                     downRawX = event.rawX
                     downRawY = event.rawY
                     val cfg = prefs.getLayout(snapshot.profile)
@@ -1170,7 +1229,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         applyWindowLayout(snapshot, updated)
                         updateCalibrationLabel(snapshot.profile, updated)
                     } else if (isSwipingRightFeed) {
-                        val revealPx = ((event.rawX - downRawX) * 1.25f).coerceIn(0f, snapshot.widthPx.toFloat())
+                        val revealPx = ((event.rawX - downRawX) * 1.65f).coerceIn(0f, snapshot.widthPx.toFloat())
                         if (usingNativeOverlayOnPill) {
                             val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
                             NativeGoogleFeedBridge.updateInteractiveDrag(progress)
@@ -1187,20 +1246,21 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    isPillTouchActive = false
                     mainHandler.removeCallbacks(longPressRunnable)
                     pillVelocityTracker?.addMovement(event)
                     pillVelocityTracker?.computeCurrentVelocity(1000)
+                    val vx = pillVelocityTracker?.xVelocity ?: 0f
                     val vy = pillVelocityTracker?.yVelocity ?: 0f
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = null
 
                     if (isSwipingRightFeed) {
-                        val revealPx = ((event.rawX - downRawX) * 1.25f).coerceIn(0f, snapshot.widthPx.toFloat())
+                        val revealPx = ((event.rawX - downRawX) * 1.65f).coerceIn(0f, snapshot.widthPx.toFloat())
                         if (usingNativeOverlayOnPill) {
                             val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
-                            NativeGoogleFeedBridge.endInteractiveDrag(progress)
+                            NativeGoogleFeedBridge.endInteractiveDrag(progress, velocityX = vx)
                         } else {
-                            // Strict 50% rule: card must pass halfway across screen to open; otherwise glides back
                             feedController.endInteractiveDrag(revealPx, snapshot.widthPx)
                         }
                         isSwipingRightFeed = false
@@ -1230,6 +1290,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    isPillTouchActive = false
                     mainHandler.removeCallbacks(longPressRunnable)
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = null
@@ -1546,13 +1607,12 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         edge.visibility = if (allowOnThisPage) View.VISIBLE else View.GONE
     }
 
-    private var pendingHideRunnable: Runnable? = null
+    private var pendingShowRunnable: Runnable? = null
 
     private fun setOverlayVisibility(
         visible: Boolean,
         isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive,
-        slideDownRestore: Boolean = false,
-        immediateHide: Boolean = false
+        slideDownRestore: Boolean = false
     ) {
         val view = overlayRoot ?: return
         if (!isOverlayAttached) return
@@ -1560,51 +1620,57 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         val showSearchBar = visible && !isMinusOne
         updateLeftEdgeVisibility(showSearchBar, isMinusOne)
 
-        if (showSearchBar) {
-            pendingHideRunnable?.let { mainHandler.removeCallbacks(it) }
-            pendingHideRunnable = null
-            if (isOverlayVisible) return
-            isOverlayVisible = true
+        if (!showSearchBar) {
+            // INSTANT 0ms hide: never lag behind when opening an app, HiBoard, App Drawer, or Shade!
+            pendingShowRunnable?.let { mainHandler.removeCallbacks(it) }
+            pendingShowRunnable = null
+            if (!isOverlayVisible) return
+            isOverlayVisible = false
             view.animate().cancel()
-            if (slideDownRestore) {
-                val density = (currentSnapshot ?: DisplayProfile.fromContext(this)).density
-                view.translationY = -64f * density
-                view.alpha = 0f
-                view.visibility = View.VISIBLE
-                view.animate()
-                    .translationY(0f)
-                    .alpha(1f)
-                    .setDuration(180L)
-                    .setInterpolator(drawerInterpolator)
-                    .start()
-            } else {
-                view.translationY = 0f
-                view.alpha = 1f
-                view.visibility = View.VISIBLE
+            view.visibility = View.GONE
+            return
+        }
+
+        // Show path:
+        if (isOverlayVisible) return
+        if (isCalibrationMode || slideDownRestore) {
+            pendingShowRunnable?.let { mainHandler.removeCallbacks(it) }
+            pendingShowRunnable = null
+            performShowOverlay(view, slideDownRestore)
+        } else if (pendingShowRunnable == null) {
+            // 140ms settle guard prevents early pop-in during swipe-home animation AND eliminates transient flicker!
+            val showTask = Runnable {
+                pendingShowRunnable = null
+                if (!isOverlayAttached || isOverlayVisible) return@Runnable
+                performShowOverlay(view, slideDownRestore = false)
             }
+            pendingShowRunnable = showTask
+            mainHandler.postDelayed(showTask, 140L)
+        }
+    }
+
+    private fun performShowOverlay(view: View, slideDownRestore: Boolean) {
+        isOverlayVisible = true
+        view.animate().cancel()
+        if (slideDownRestore) {
+            val density = (currentSnapshot ?: DisplayProfile.fromContext(this)).density
+            view.translationY = -64f * density
+            view.alpha = 0f
+            view.visibility = View.VISIBLE
+            view.animate()
+                .translationY(0f)
+                .alpha(1f)
+                .setDuration(180L)
+                .setInterpolator(drawerInterpolator)
+                .start()
         } else {
-            if (!isOverlayVisible) {
-                pendingHideRunnable?.let { mainHandler.removeCallbacks(it) }
-                pendingHideRunnable = null
-                return
-            }
-            if (immediateHide || isMinusOne) {
-                pendingHideRunnable?.let { mainHandler.removeCallbacks(it) }
-                pendingHideRunnable = null
-                isOverlayVisible = false
-                view.animate().cancel()
-                view.visibility = View.GONE
-            } else if (pendingHideRunnable == null) {
-                // 90ms anti-flicker debounce absorbs transient overlay/status-bar glitches while staying snappy
-                val hideTask = Runnable {
-                    pendingHideRunnable = null
-                    isOverlayVisible = false
-                    view.animate().cancel()
-                    view.visibility = View.GONE
-                }
-                pendingHideRunnable = hideTask
-                mainHandler.postDelayed(hideTask, 90L)
-            }
+            view.translationY = 0f
+            view.alpha = 0f
+            view.visibility = View.VISIBLE
+            view.animate()
+                .alpha(1f)
+                .setDuration(110L)
+                .start()
         }
     }
 

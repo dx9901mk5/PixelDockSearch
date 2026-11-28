@@ -14,6 +14,7 @@ import kotlin.system.exitProcess
 class TaskMonitorUserService : ITaskMonitorService.Stub() {
 
     private val componentPattern = Pattern.compile("([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)+)/")
+    private val windowPkgPattern = Pattern.compile("Window\\{([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)+):")
     private val boundsPattern = Pattern.compile("bounds=\"\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]\"")
     private val hexEventPattern = Pattern.compile("0003\\s+(0035|0036|0039)\\s+([0-9a-fA-F]+)")
     private val keyTouchPattern = Pattern.compile("0001\\s+014a\\s+([0-9a-fA-F]+)")
@@ -29,25 +30,63 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
 
     override fun getForegroundPackage(): String {
         val windowOutput = getCurrentFocusOutput()
-        if (windowOutput.contains("NotificationShade") ||
-            windowOutput.contains("StatusBar") ||
-            windowOutput.contains("Bouncer") ||
-            windowOutput.contains("Keyguard") ||
-            windowOutput.contains("Recents") ||
-            windowOutput.contains("AllApps") ||
-            windowOutput.contains("AppDrawer") ||
-            windowOutput.contains("PopupWindow") ||
-            windowOutput.contains("DeepShortcut") ||
-            windowOutput.contains("ActionMenu") ||
-            windowOutput.contains("Folder")
+
+        val focusLine = findNonNullLine(windowOutput, "mCurrentFocus")
+        val topOpaqueLine = findNonNullLine(windowOutput, "mTopFullscreenOpaqueWindowState")
+        val focusedAppLine = findNonNullLine(windowOutput, "mFocusedApp")
+
+        // 1. Detect overlay-style OEM Minus-One (e.g., Window{com.vivo.hiboard:... u0 HiBoard type=2}) immediately
+        if (focusLine.contains("HiBoard", ignoreCase = true) ||
+            focusLine.contains("com.vivo.hiboard", ignoreCase = true) ||
+            topOpaqueLine.contains("HiBoard", ignoreCase = true)
+        ) {
+            return "com.vivo.hiboard"
+        }
+
+        // 2. Detect SystemUI overlays / dialogs / drawers / popups on the active focus window
+        if (focusLine.contains("NotificationShade") ||
+            focusLine.contains("Bouncer") ||
+            focusLine.contains("Keyguard") ||
+            focusLine.contains("Recents") ||
+            focusLine.contains("AllApps") ||
+            focusLine.contains("AppDrawer") ||
+            focusLine.contains("PopupWindow") ||
+            focusLine.contains("DeepShortcut") ||
+            focusLine.contains("ActionMenu") ||
+            focusLine.contains("Folder") ||
+            focusLine.contains("VBottomSheetDialog")
         ) {
             return SYSTEM_UI_OVERLAY
         }
 
-        extractPackage(windowOutput, "mCurrentFocus")?.let { pkg ->
-            if (pkg != "com.android.systemui") return pkg
+        val topOpaquePkg = extractPackageFromLine(topOpaqueLine)
+        val isFocusTaskbarOrDock = focusLine.contains("DockPanel") || focusLine.contains("Taskbar")
+
+        // 3. On tablets, touching the bottom DockPanel/Taskbar inside another app sets mCurrentFocus to
+        //    Window{com.bbk.launcher2:... u0 DockPanel type=2038} while mTopFullscreenOpaqueWindowState is still the app!
+        if (isFocusTaskbarOrDock && !topOpaquePkg.isNullOrBlank()) {
+            return topOpaquePkg
         }
-        extractPackage(windowOutput, "mFocusedApp")?.let { pkg ->
+
+        val focusPkg = extractPackageFromLine(focusLine)
+        if (!focusPkg.isNullOrBlank() && focusPkg != "com.android.systemui") {
+            // 4. Anti-early-show guard: during swipe-home animation, mCurrentFocus can switch to launcher
+            //    while the previous app is still mTopFullscreenOpaqueWindowState!
+            if (!topOpaquePkg.isNullOrBlank() &&
+                topOpaquePkg != focusPkg &&
+                topOpaquePkg != "com.android.systemui" &&
+                focusPkg.contains("launcher", ignoreCase = true)
+            ) {
+                return topOpaquePkg
+            }
+            return focusPkg
+        }
+
+        if (!topOpaquePkg.isNullOrBlank() && topOpaquePkg != "com.android.systemui") {
+            return topOpaquePkg
+        }
+
+        extractPackageFromLine(focusedAppLine)?.let { pkg ->
             if (pkg != "com.android.systemui") return pkg
         }
 
@@ -244,11 +283,11 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
 
     private fun getCurrentFocusOutput(): String {
         var windowOutput = runShell(
-            "dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'"
+            "dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp|mTopFullscreenOpaqueWindowState'"
         )
         if (windowOutput.isBlank()) {
             windowOutput = runShell(
-                "dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'"
+                "dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp|mTopFullscreenOpaqueWindowState'"
             )
         }
         return windowOutput
@@ -275,8 +314,11 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
         touchThreadRunning = true
         Thread {
             try {
-                // Calibrate raw touchscreen digitizer Y axis to real display pixels
-                val yScale = computeTouchYScale()
+                // Calibrate raw touchscreen digitizer X & Y axes to real display pixels
+                val cal = computeTouchCalibration()
+                val xScale = cal.xScale
+                val yScale = cal.yScale
+                val maxRawX = cal.maxRawX
                 val proc = ProcessBuilder("sh", "-c", "getevent -q 2>/dev/null")
                     .redirectErrorStream(true)
                     .start()
@@ -288,11 +330,17 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
                 var curX = -1
                 var curY = -1
                 var trackingUpward = false
+                var trackingRight = false
                 var lastSentPx = 0
+                var lastSentRightPx = 0
                 var lastMoveTimeMs = 0L
+                var lastRightMoveTimeMs = 0L
                 var prevYForVel = -1
                 var prevVelTimeMs = 0L
                 var velocityPxPerSec = 0
+                var prevXForVel = -1
+                var prevVelXTimeMs = 0L
+                var velocityXPxPerSec = 0
 
                 BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
                     while (touchThreadRunning) {
@@ -307,15 +355,23 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
                                 downX = -1
                                 downY = -1
                                 trackingUpward = false
+                                trackingRight = false
                                 lastSentPx = 0
+                                lastSentRightPx = 0
                                 velocityPxPerSec = 0
+                                velocityXPxPerSec = 0
                             } else if (v == 0 && fingerDown) {
                                 if (trackingUpward && downY >= 0 && curY >= 0) {
                                     val upPx = ((downY - curY) * yScale).toInt().coerceAtLeast(0)
                                     runCatching { cb.onUpwardDragEnd(upPx, velocityPxPerSec) }
                                 }
+                                if (trackingRight && downX >= 0 && curX >= 0) {
+                                    val rightPx = ((curX - downX) * xScale).toInt().coerceAtLeast(0)
+                                    runCatching { cb.onRightSwipeEnd(rightPx, velocityXPxPerSec) }
+                                }
                                 fingerDown = false
                                 trackingUpward = false
+                                trackingRight = false
                                 downX = -1
                                 downY = -1
                             }
@@ -333,8 +389,13 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
                                             val upPx = ((downY - curY) * yScale).toInt().coerceAtLeast(0)
                                             runCatching { cb.onUpwardDragEnd(upPx, velocityPxPerSec) }
                                         }
+                                        if (trackingRight && downX >= 0 && curX >= 0) {
+                                            val rightPx = ((curX - downX) * xScale).toInt().coerceAtLeast(0)
+                                            runCatching { cb.onRightSwipeEnd(rightPx, velocityXPxPerSec) }
+                                        }
                                         fingerDown = false
                                         trackingUpward = false
+                                        trackingRight = false
                                         downX = -1
                                         downY = -1
                                     } else {
@@ -342,15 +403,49 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
                                         downX = -1
                                         downY = -1
                                         trackingUpward = false
+                                        trackingRight = false
                                         lastSentPx = 0
+                                        lastSentRightPx = 0
                                         velocityPxPerSec = 0
+                                        velocityXPxPerSec = 0
                                     }
                                 }
                                 "0035" -> { // ABS_MT_POSITION_X
                                     val x = rawVal.toInt()
                                     if (fingerDown) {
-                                        if (downX < 0) downX = x
+                                        val now = System.currentTimeMillis()
+                                        if (downX < 0) {
+                                            downX = x
+                                            prevXForVel = x
+                                            prevVelXTimeMs = now
+                                        }
                                         curX = x
+                                        val dxRight = ((curX - downX) * xScale).toInt()
+                                        val dyAbs = if (downY >= 0 && curY >= 0) {
+                                            (abs(curY - downY) * yScale).toInt()
+                                        } else {
+                                            0
+                                        }
+                                        val dtX = now - prevVelXTimeMs
+                                        if (dtX >= 16L) {
+                                            velocityXPxPerSec = ((((curX - prevXForVel) * xScale) * 1000f) / dtX).toInt()
+                                            prevXForVel = curX
+                                            prevVelXTimeMs = now
+                                        }
+                                        // Engage passive right-swipe detection only when clearly dragging RIGHT
+                                        if (!trackingRight && !trackingUpward && dxRight > 34 && dxRight > dyAbs * 1.4f) {
+                                            trackingRight = true
+                                        }
+                                        if (trackingRight && (now - lastRightMoveTimeMs >= 14L) && abs(dxRight - lastSentRightPx) >= 4) {
+                                            lastSentRightPx = dxRight
+                                            lastRightMoveTimeMs = now
+                                            val startXPermille = if (maxRawX > 0) {
+                                                ((downX.toLong() * 1000L) / maxRawX.toLong()).toInt().coerceIn(0, 1000)
+                                            } else {
+                                                200
+                                            }
+                                            runCatching { cb.onRightSwipe(dxRight.coerceAtLeast(0), startXPermille) }
+                                        }
                                     }
                                 }
                                 "0036" -> { // ABS_MT_POSITION_Y
@@ -365,7 +460,7 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
                                         curY = y
                                         val dyUp = ((downY - curY) * yScale).toInt()
                                         val dxAbs = if (downX >= 0 && curX >= 0) {
-                                            (abs(curX - downX) * yScale).toInt()
+                                            (abs(curX - downX) * xScale).toInt()
                                         } else {
                                             0
                                         }
@@ -378,7 +473,7 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
                                         }
 
                                         // Only engage when clearly swiping UPWARD (not horizontal page swipe!)
-                                        if (!trackingUpward && dyUp > 24 && dyUp > dxAbs * 1.4f) {
+                                        if (!trackingUpward && !trackingRight && dyUp > 24 && dyUp > dxAbs * 1.4f) {
                                             trackingUpward = true
                                         }
                                         if (trackingUpward && (now - lastMoveTimeMs >= 14L) && abs(dyUp - lastSentPx) >= 4) {
@@ -407,26 +502,60 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
         }
     }
 
-    private fun computeTouchYScale(): Float {
+    private data class TouchCalibration(val xScale: Float, val yScale: Float, val maxRawX: Int)
+
+    private fun computeTouchCalibration(): TouchCalibration {
         return try {
             val sizeOut = runShell("wm size 2>/dev/null")
             val sizeMatch = Pattern.compile("(\\d+)x(\\d+)").matcher(sizeOut)
+            var screenW = 0
             var screenH = 0
             while (sizeMatch.find()) {
+                val w = sizeMatch.group(1)?.toIntOrNull() ?: 0
                 val h = sizeMatch.group(2)?.toIntOrNull() ?: 0
-                if (h > 0) screenH = h
+                if (w > 0 && h > 0) {
+                    screenW = w
+                    screenH = h
+                }
             }
-            val propsOut = runShell("getevent -p 2>/dev/null | grep -E '0036.*max [0-9]+'")
-            val maxMatch = Pattern.compile("max\\s+(\\d+)").matcher(propsOut)
-            val maxY = if (maxMatch.find()) maxMatch.group(1)?.toIntOrNull() ?: 0 else 0
-            if (screenH > 0 && maxY > 0) {
-                (screenH.toFloat() / maxY.toFloat()).coerceIn(0.05f, 4f)
-            } else {
-                1f
-            }
+            val propsXOut = runShell("getevent -p 2>/dev/null | grep -E '0035.*max [0-9]+'")
+            val maxXMatch = Pattern.compile("max\\s+(\\d+)").matcher(propsXOut)
+            val maxX = if (maxXMatch.find()) maxXMatch.group(1)?.toIntOrNull() ?: 0 else 0
+
+            val propsYOut = runShell("getevent -p 2>/dev/null | grep -E '0036.*max [0-9]+'")
+            val maxYMatch = Pattern.compile("max\\s+(\\d+)").matcher(propsYOut)
+            val maxY = if (maxYMatch.find()) maxYMatch.group(1)?.toIntOrNull() ?: 0 else 0
+
+            val xScale = if (screenW > 0 && maxX > 0) (screenW.toFloat() / maxX.toFloat()).coerceIn(0.05f, 4f) else 1f
+            val yScale = if (screenH > 0 && maxY > 0) (screenH.toFloat() / maxY.toFloat()).coerceIn(0.05f, 4f) else 1f
+            TouchCalibration(xScale, yScale, maxX)
         } catch (_: Throwable) {
-            1f
+            TouchCalibration(1f, 1f, 0)
         }
+    }
+
+    private fun findNonNullLine(output: String, marker: String): String {
+        if (output.isBlank()) return ""
+        var lastMatch = ""
+        for (line in output.lineSequence()) {
+            if (!line.contains(marker)) continue
+            if (line.contains("$marker=null")) continue
+            lastMatch = line
+        }
+        return lastMatch
+    }
+
+    private fun extractPackageFromLine(line: String): String? {
+        if (line.isBlank()) return null
+        val compMatch = componentPattern.matcher(line)
+        if (compMatch.find()) {
+            return compMatch.group(1)
+        }
+        val winMatch = windowPkgPattern.matcher(line)
+        if (winMatch.find()) {
+            return winMatch.group(1)
+        }
+        return null
     }
 
     private fun stopGetEventThread() {

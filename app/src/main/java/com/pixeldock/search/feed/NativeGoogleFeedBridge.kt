@@ -212,15 +212,15 @@ object NativeGoogleFeedBridge {
     }
 
     /**
-     * Strict 50% threshold rule:
-     * - progress >= 0.50f -> commit open to real live Pixel Discover Feed
-     * - progress <  0.50f -> glide back to 0.0f and invisibly close the transparent host Activity
+     * Responsive follow-finger commit rule:
+     * - progress >= 0.30f OR quick right flick (progress >= 0.14f && velocityX >= 750f px/s) -> commit open
+     * - otherwise -> smoothly glide back to 0.0f and invisibly close the transparent host Activity
      */
-    fun endInteractiveDrag(finalProgress: Float) {
+    fun endInteractiveDrag(finalProgress: Float, velocityX: Float = 0f) {
         val clamped = finalProgress.coerceIn(0f, 1f)
         latestDragProgress = clamped
         isDragSessionActive = false
-        val shouldOpen = clamped >= 0.50f
+        val shouldOpen = clamped >= 0.30f || (clamped >= 0.14f && velocityX >= 750f)
 
         if (!isWindowAttached) {
             pendingDragEnded = true
