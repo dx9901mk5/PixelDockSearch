@@ -69,6 +69,8 @@ object LauncherGestureBus {
     private val drawerNodeTexts = listOf(
         "全部應用程式",
         "全部应用",
+        "建議的應用程式",
+        "建议的应用",
         "原子元件",
         "原子组件",
         "搜尋應用程式",

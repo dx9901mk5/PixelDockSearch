@@ -187,6 +187,22 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    fun captureScreenJpeg(maxWidth: Int = 540, quality: Int = 78): ByteArray? {
+        return try {
+            taskService?.captureScreenJpeg(maxWidth, quality)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun isLauncherDrawerOrPopupVisible(): Boolean {
+        return try {
+            taskService?.isLauncherDrawerOrPopupVisible() == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun setTouchCallback(callback: ITouchEventCallback?) {
         try {
             taskService?.setTouchCallback(callback)

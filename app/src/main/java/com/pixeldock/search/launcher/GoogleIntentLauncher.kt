@@ -1,5 +1,6 @@
 package com.pixeldock.search.launcher
 
+import android.app.ActivityOptions
 import android.app.SearchManager
 import android.content.ComponentName
 import android.content.Context
@@ -12,9 +13,6 @@ object GoogleIntentLauncher {
     const val GOOGLE_APP_PACKAGE = "com.google.android.googlequicksearchbox"
     private const val LENS_PACKAGE = "com.google.ar.lens"
 
-    /**
-     * Left G icon: directly opens the Google App itself.
-     */
     fun launchGoogleApp(context: Context) {
         val candidates = listOf(
             context.packageManager.getLaunchIntentForPackage(GOOGLE_APP_PACKAGE),
@@ -30,10 +28,6 @@ object GoogleIntentLauncher {
         }
     }
 
-    /**
-     * Launches the native Google App with ZERO transition animation so our sliding Feed card
-     * can cross-fade seamlessly right into the real live Google App underneath.
-     */
     fun launchGoogleAppNoAnim(context: Context): Boolean {
         val candidates = listOf(
             context.packageManager.getLaunchIntentForPackage(GOOGLE_APP_PACKAGE),
@@ -44,7 +38,7 @@ object GoogleIntentLauncher {
                 )
             }
         )
-        val noAnimBundle = android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
+        val noAnimBundle = ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
         for (intent in candidates) {
             if (intent == null) continue
             try {
@@ -61,9 +55,20 @@ object GoogleIntentLauncher {
         return false
     }
 
-    /**
-     * Middle of the search bar: opens Google text search directly.
-     */
+    fun launchHomeNoAnim(context: Context): Boolean {
+        return try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            }
+            val noAnimBundle = ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
+            context.startActivity(homeIntent, noAnimBundle)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun launchGoogleSearch(context: Context) {
         val candidates = listOf(
             Intent("android.search.action.GLOBAL_SEARCH").apply {
@@ -81,9 +86,6 @@ object GoogleIntentLauncher {
         }
     }
 
-    /**
-     * Mic icon: opens Google Speech-to-Text Voice Input (NOT Gemini) and searches the spoken query in Google App.
-     */
     fun launchVoiceSearch(context: Context) {
         val bridgeIntent = Intent(context, VoiceSearchBridgeActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
@@ -98,49 +100,20 @@ object GoogleIntentLauncher {
         }
     }
 
-    /**
-     * Lens icon: opens Google App's built-in Google Lens using verified non-allowlisted entry points
-     * (Shizuku launcher runs first in OverlaySearchService for internal LensActivity).
-     */
     fun launchGoogleLens(context: Context): Boolean {
-        val candidates = mutableListOf<Intent?>()
-        candidates += Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://")).apply {
-            setPackage(GOOGLE_APP_PACKAGE)
-        }
-        candidates += Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://"))
-        candidates += context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE)
-        candidates += Intent(Intent.ACTION_MAIN).apply {
-            component = ComponentName(
-                LENS_PACKAGE,
-                "com.google.vr.apps.ornament.app.lens.LensLauncherActivity"
-            )
-        }
-        candidates += Intent(Intent.ACTION_VIEW).apply {
-            component = ComponentName(
-                GOOGLE_APP_PACKAGE,
-                "com.google.android.apps.search.lens.LensActivity"
-            )
-        }
-
-        // Check PackageManager for any genuinely exported non-allowlist Lens activity inside Google App
-        runCatching {
-            val pkgInfo = context.packageManager.getPackageInfo(
-                GOOGLE_APP_PACKAGE,
-                android.content.pm.PackageManager.GET_ACTIVITIES
-            )
-            pkgInfo.activities
-                ?.filter {
-                    it.exported &&
-                        it.name.contains("Lens", ignoreCase = true) &&
-                        !it.name.contains("Exported", ignoreCase = true)
-                }
-                ?.forEach { info ->
-                    candidates += Intent(Intent.ACTION_VIEW).apply {
-                        component = ComponentName(GOOGLE_APP_PACKAGE, info.name)
-                    }
-                }
-        }
-
+        val candidates = listOf(
+            Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://")).apply {
+                setPackage(GOOGLE_APP_PACKAGE)
+            },
+            Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://")),
+            context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE),
+            Intent(Intent.ACTION_MAIN).apply {
+                component = ComponentName(
+                    LENS_PACKAGE,
+                    "com.google.vr.apps.ornament.app.lens.LensLauncherActivity"
+                )
+            }
+        )
         for (intent in candidates) {
             if (intent == null) continue
             val resolvable = runCatching {

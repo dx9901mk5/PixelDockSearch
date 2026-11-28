@@ -1,6 +1,9 @@
 package com.pixeldock.search.shizuku
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
@@ -99,6 +102,54 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
             } else {
                 false
             }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    override fun captureScreenJpeg(maxWidth: Int, quality: Int): ByteArray? {
+        val tmpPath = "/data/local/tmp/pds_snap.png"
+        return try {
+            val process = ProcessBuilder("sh", "-c", "screencap -p $tmpPath")
+                .redirectErrorStream(true)
+                .start()
+            val ok = process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
+            val f = File(tmpPath)
+            if (!ok || !f.exists() || f.length() < 1024L) return null
+
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(tmpPath, boundsOpts)
+            val rawW = boundsOpts.outWidth
+            if (rawW <= 0) return null
+
+            val targetW = maxWidth.coerceIn(240, 720)
+            var sample = 1
+            while (rawW / (sample * 2) >= targetW) {
+                sample *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            val bmp = BitmapFactory.decodeFile(tmpPath, decodeOpts) ?: return null
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(50, 90), baos)
+            bmp.recycle()
+            runCatching { f.delete() }
+            val bytes = baos.toByteArray()
+            if (bytes.size in 1024..600_000) bytes else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    override fun isLauncherDrawerOrPopupVisible(): Boolean {
+        return try {
+            // Check visible App Drawer / Popup views in the top Activity hierarchy (works even when Accessibility is OFF)
+            val out = runShell(
+                "dumpsys activity top 2>/dev/null | grep -E 'V\\.E\\.|V\\.\\.\\.' | grep -iE 'AllApps|AppDrawer|DrawerView|AppsList|AtomWidget|PopupContainer|DeepShortcut|ActionMenu|全部應用程式|搜尋應用程式|建議的應用程式|原子元件|全部应用|搜索应用' | head -n 4"
+            )
+            out.isNotBlank()
         } catch (_: Throwable) {
             false
         }

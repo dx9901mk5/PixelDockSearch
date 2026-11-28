@@ -28,6 +28,12 @@ class LauncherDetector(
     @Volatile
     private var lastKnownUsagePackage: String = ""
 
+    @Volatile
+    private var lastDrawerCheckMs: Long = 0L
+
+    @Volatile
+    private var cachedShizukuDrawerVisible: Boolean = false
+
     fun getDefaultLauncherPackage(): String? {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         val resolveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -118,7 +124,19 @@ class LauncherDetector(
                             shizukuPkg, "", prefs.customMinusOnePackage, prefs.customMinusOneSignature, ""
                         )
                     ) return false
-                    if (shizukuPkg.isNotBlank()) return shizukuPkg in launchers
+                    if (shizukuPkg.isNotBlank()) {
+                        val inLauncher = shizukuPkg in launchers
+                        if (!inLauncher) {
+                            cachedShizukuDrawerVisible = false
+                            return false
+                        }
+                        val now = System.currentTimeMillis()
+                        if (now - lastDrawerCheckMs >= 320L) {
+                            lastDrawerCheckMs = now
+                            cachedShizukuDrawerVisible = shizukuManager.isLauncherDrawerOrPopupVisible()
+                        }
+                        return !cachedShizukuDrawerVisible
+                    }
                 }
                 // 3. UsageStats fallback
                 if (hasUsageStatsPermission(context)) {

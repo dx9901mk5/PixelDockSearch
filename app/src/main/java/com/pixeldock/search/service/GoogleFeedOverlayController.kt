@@ -37,6 +37,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import com.pixeldock.search.R
 import com.pixeldock.search.data.PrefsRepository
 import com.pixeldock.search.launcher.GoogleIntentLauncher
 import com.pixeldock.search.model.DisplayProfile
@@ -47,7 +48,8 @@ import kotlin.math.roundToInt
 class GoogleFeedOverlayController(
     private val context: Context,
     private val windowManager: WindowManager,
-    private val prefs: PrefsRepository
+    private val prefs: PrefsRepository,
+    private val onOpenedNativeGoogleApp: () -> Unit = {}
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val slideInterpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
@@ -55,6 +57,7 @@ class GoogleFeedOverlayController(
     private var rootContainer: SwipeDismissFrameLayout? = null
     private var scrimView: View? = null
     private var cardContainer: FrameLayout? = null
+    private var darkGlassFallback: LinearLayout? = null
     private var webColumn: LinearLayout? = null
     private var snapshotImageView: ImageView? = null
     private var webView: WebView? = null
@@ -62,10 +65,11 @@ class GoogleFeedOverlayController(
     private var windowParams: WindowManager.LayoutParams? = null
 
     private var cachedSnapshotBitmap: Bitmap? = null
+    private var cachedSnapshotProfileKey: String = ""
     private var activeAnimator: ValueAnimator? = null
     private var currentProgress: Float = 0f
     private var isAttached = false
-    private var isPrewarmed = false
+    private var isWebPrewarmed = false
     private var isShowing = false
     private var isWaitingForNativeHandoff = false
     private var returnHomeOnDismiss = false
@@ -131,9 +135,9 @@ class GoogleFeedOverlayController(
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     isDraggingClose = false
                     if (currentProgress <= 0.50f) {
-                        animateToProgress(0f, widthPx, returnHomeAfterClose = returnHomeOnDismiss)
+                        animateToProgress(0f, widthPx, returnHomeAfterClose = returnHomeOnDismiss, launchNativeOnOpen = false)
                     } else {
-                        animateToProgress(1f, widthPx, returnHomeAfterClose = false)
+                        animateToProgress(1f, widthPx, returnHomeAfterClose = false, launchNativeOnOpen = false)
                     }
                     return true
                 }
@@ -142,23 +146,53 @@ class GoogleFeedOverlayController(
         }
     }
 
-    fun getSnapshotFilePath(): String {
-        val dir = context.externalCacheDir ?: context.cacheDir
-        return File(dir, SNAPSHOT_FILENAME).absolutePath
+    private fun snapshotFileFor(profile: DisplayProfile): File {
+        val dir = File(context.cacheDir, "feed_snaps").apply { mkdirs() }
+        return File(dir, "google_snap_${profile.key}.jpg")
     }
 
-    fun reloadSnapshotFromDisk() {
-        val file = File(getSnapshotFilePath())
-        if (!file.exists() || file.length() < 1024L) return
+    fun saveSnapshotBytes(jpegBytes: ByteArray, profile: DisplayProfile) {
+        if (jpegBytes.size < 1024) return
         try {
-            val opts = BitmapFactory.Options().apply {
-                inSampleSize = 2
-                inPreferredConfig = Bitmap.Config.RGB_565
-            }
-            val bmp = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return
+            val file = snapshotFileFor(profile)
+            file.writeBytes(jpegBytes)
+            val bmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size) ?: return
             mainHandler.post {
                 val old = cachedSnapshotBitmap
                 cachedSnapshotBitmap = bmp
+                cachedSnapshotProfileKey = profile.key
+                snapshotImageView?.setImageBitmap(bmp)
+                updateCardVisualMode()
+                if (old != null && old !== bmp && !old.isRecycled) {
+                    old.recycle()
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun reloadSnapshotForProfile(profile: DisplayProfile) {
+        if (cachedSnapshotProfileKey == profile.key &&
+            cachedSnapshotBitmap != null &&
+            cachedSnapshotBitmap?.isRecycled == false
+        ) {
+            mainHandler.post { updateCardVisualMode() }
+            return
+        }
+        val file = snapshotFileFor(profile)
+        if (!file.exists() || file.length() < 1024L) {
+            mainHandler.post {
+                cachedSnapshotProfileKey = ""
+                updateCardVisualMode()
+            }
+            return
+        }
+        try {
+            val bmp = BitmapFactory.decodeFile(file.absolutePath) ?: return
+            mainHandler.post {
+                val old = cachedSnapshotBitmap
+                cachedSnapshotBitmap = bmp
+                cachedSnapshotProfileKey = profile.key
                 snapshotImageView?.setImageBitmap(bmp)
                 updateCardVisualMode()
                 if (old != null && old !== bmp && !old.isRecycled) {
@@ -171,32 +205,56 @@ class GoogleFeedOverlayController(
 
     fun prewarm() {
         if (!Settings.canDrawOverlays(context)) return
-        reloadSnapshotFromDisk()
-        if (isPrewarmed) return
-        mainHandler.postDelayed({
-            if (!isPrewarmed && Settings.canDrawOverlays(context)) {
-                ensureAttached()
-                val root = rootContainer
-                if (root != null && !isShowing) {
-                    setWindowFlags(focusable = false, touchable = false)
-                    root.visibility = View.INVISIBLE
-                }
-                webView?.loadUrl(FEED_URL)
-                isPrewarmed = true
-                mainHandler.postDelayed({
-                    if (!isShowing && currentProgress <= 0.01f) {
-                        rootContainer?.visibility = View.GONE
+        val profile = DisplayProfile.fromContext(context).profile
+        reloadSnapshotForProfile(profile)
+        // Only prewarm WebView if the user explicitly turned OFF native Google App mode
+        if (!prefs.feedLaunchNativeGoogleApp && !isWebPrewarmed) {
+            mainHandler.postDelayed({
+                if (!isWebPrewarmed && !prefs.feedLaunchNativeGoogleApp && Settings.canDrawOverlays(context)) {
+                    ensureAttached()
+                    val root = rootContainer
+                    if (root != null && !isShowing) {
+                        setWindowFlags(focusable = false, touchable = false)
+                        root.visibility = View.INVISIBLE
                     }
-                }, 4000L)
-            }
-        }, 900L)
+                    webView?.loadUrl(FEED_URL)
+                    isWebPrewarmed = true
+                    mainHandler.postDelayed({
+                        if (!isShowing && currentProgress <= 0.01f) {
+                            rootContainer?.visibility = View.GONE
+                        }
+                    }, 3500L)
+                }
+            }, 900L)
+        }
     }
 
+    /**
+     * Visual priority (ZERO ugly white webpage flash in native Google App mode!):
+     * 1. Native mode + Real Google App snapshot exists -> Show pixel-identical Google App screenshot!
+     * 2. Native mode + No snapshot yet -> Show sleek translucent dark-glass card with centered Google G logo!
+     * 3. WebView mode (native toggle OFF) -> Show interactive WebView card.
+     */
     private fun updateCardVisualMode() {
-        val hasSnapshot = cachedSnapshotBitmap != null && cachedSnapshotBitmap?.isRecycled == false
-        val showSnapshot = prefs.feedLaunchNativeGoogleApp && hasSnapshot
-        snapshotImageView?.visibility = if (showSnapshot) View.VISIBLE else View.GONE
-        webColumn?.visibility = if (showSnapshot) View.GONE else View.VISIBLE
+        val currentProfile = DisplayProfile.fromContext(context).profile
+        val hasMatchingSnapshot = cachedSnapshotBitmap != null &&
+            cachedSnapshotBitmap?.isRecycled == false &&
+            cachedSnapshotProfileKey == currentProfile.key
+
+        if (prefs.feedLaunchNativeGoogleApp) {
+            webColumn?.visibility = View.GONE
+            if (hasMatchingSnapshot) {
+                snapshotImageView?.visibility = View.VISIBLE
+                darkGlassFallback?.visibility = View.GONE
+            } else {
+                snapshotImageView?.visibility = View.GONE
+                darkGlassFallback?.visibility = View.VISIBLE
+            }
+        } else {
+            snapshotImageView?.visibility = View.GONE
+            darkGlassFallback?.visibility = View.GONE
+            webColumn?.visibility = View.VISIBLE
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
@@ -230,12 +288,12 @@ class GoogleFeedOverlayController(
         val card = FrameLayout(context).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                setColor(bgColor)
+                setColor(Color.TRANSPARENT)
                 cornerRadii = floatArrayOf(0f, 0f, cardCornerPx, cardCornerPx, cardCornerPx, cardCornerPx, 0f, 0f)
             }
             elevation = 20f * density
             translationX = -snapshot.widthPx.toFloat()
-            alpha = 0.45f
+            alpha = 0.55f
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
@@ -245,13 +303,51 @@ class GoogleFeedOverlayController(
             }
         }
 
-        // Layer 1: Pre-warmed WebView column (used when no native snapshot exists yet or in WebView mode)
-        val webCol = LinearLayout(context).apply {
+        // Layer 1: Sleek Dark Translucent Glass Fallback Card (黑底半透明卡片 — zero white flash!)
+        val darkGlass = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#CC141518"))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
+            addView(
+                ImageView(context).apply {
+                    setImageResource(R.drawable.ic_google_g)
+                    val sizePx = (48 * density).roundToInt()
+                    layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = "Google"
+                    setTextColor(Color.parseColor("#DDE8EAED"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                    paint.isFakeBoldText = true
+                    setPadding(0, (12 * density).roundToInt(), 0, 0)
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = "滑動過半即進入 Google App"
+                    setTextColor(Color.parseColor("#99BDC1C6"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    setPadding(0, (6 * density).roundToInt(), 0, 0)
+                }
+            )
+            visibility = View.GONE
+        }
+
+        // Layer 2: WebView Column (only used if user explicitly disables native Google App mode)
+        val webCol = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bgColor)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            visibility = View.GONE
         }
 
         val topPaddingPx = getStatusBarHeightPx()
@@ -266,7 +362,6 @@ class GoogleFeedOverlayController(
                 (6 * density).roundToInt()
             )
         }
-
         val titleView = TextView(context).apply {
             text = "Google 探索"
             setTextColor(textColor)
@@ -274,14 +369,12 @@ class GoogleFeedOverlayController(
             paint.isFakeBoldText = true
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-
         val refreshBtn = makeHeaderAction("重整", subTextColor, density) { webView?.reload() }
         val openAppBtn = makeHeaderAction("Google App", Color.parseColor("#4285F4"), density) {
             dismiss(returnHome = false)
             GoogleIntentLauncher.launchGoogleApp(context)
         }
         val closeBtn = makeHeaderAction("✕", textColor, density) { dismiss() }
-
         header.addView(titleView)
         header.addView(refreshBtn)
         header.addView(openAppBtn)
@@ -297,11 +390,7 @@ class GoogleFeedOverlayController(
         }
 
         val wv = WebView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             setBackgroundColor(bgColor)
             settings.apply {
                 javaScriptEnabled = true
@@ -317,17 +406,10 @@ class GoogleFeedOverlayController(
                 settings.isAlgorithmicDarkeningAllowed = isNight
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 @Suppress("DEPRECATION")
-                settings.forceDark = if (isNight) {
-                    WebSettings.FORCE_DARK_ON
-                } else {
-                    WebSettings.FORCE_DARK_OFF
-                }
+                settings.forceDark = if (isNight) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
             }
             webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                    return false
-                }
-
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     if (!isShowing && currentProgress <= 0.01f) {
@@ -342,14 +424,14 @@ class GoogleFeedOverlayController(
                 }
             }
         }
-
         webCol.addView(header)
         webCol.addView(bar)
         webCol.addView(wv)
 
-        // Layer 2: Real cached Google App snapshot (pixel-identical to native Google App!)
+        // Layer 3: Real Cached Google App Screenshot
         val snapIv = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(Color.parseColor("#141518"))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -358,6 +440,7 @@ class GoogleFeedOverlayController(
             visibility = View.GONE
         }
 
+        card.addView(darkGlass)
         card.addView(webCol)
         card.addView(snapIv)
 
@@ -385,6 +468,7 @@ class GoogleFeedOverlayController(
             rootContainer = root
             scrimView = scrim
             cardContainer = card
+            darkGlassFallback = darkGlass
             webColumn = webCol
             snapshotImageView = snapIv
             webView = wv
@@ -415,10 +499,11 @@ class GoogleFeedOverlayController(
     fun beginInteractiveDrag(screenWidthPx: Int) {
         if (!Settings.canDrawOverlays(context)) return
         ensureAttached()
+        reloadSnapshotForProfile(DisplayProfile.fromContext(context).profile)
         updateCardVisualMode()
-        if (!isPrewarmed) {
+        if (!prefs.feedLaunchNativeGoogleApp && !isWebPrewarmed) {
             webView?.loadUrl(FEED_URL)
-            isPrewarmed = true
+            isWebPrewarmed = true
         }
         val root = rootContainer ?: return
         activeAnimator?.cancel()
@@ -438,18 +523,77 @@ class GoogleFeedOverlayController(
         applyDragProgress(progress, screenWidthPx)
     }
 
-    /**
-     * Strict 50% threshold rule:
-     * - progress >= 0.50f -> finishes sliding card open, and if feedLaunchNativeGoogleApp is ON,
-     *   seamlessly launches the real native Google App underneath and cross-fades straight into it!
-     * - progress <  0.50f -> smoothly glides back left and hides (止煞歸位不顯示).
-     */
     fun endInteractiveDrag(revealPx: Float, screenWidthPx: Int) {
         val progress = if (screenWidthPx > 0) (revealPx / screenWidthPx.toFloat()).coerceIn(0f, 1f) else 0f
         if (progress >= 0.50f) {
-            animateToProgress(1f, screenWidthPx, returnHomeAfterClose = false, durationMs = 185L)
+            animateToProgress(
+                target = 1f,
+                screenWidthPx = screenWidthPx,
+                returnHomeAfterClose = false,
+                launchNativeOnOpen = prefs.feedLaunchNativeGoogleApp,
+                durationMs = 185L
+            )
         } else {
-            animateToProgress(0f, screenWidthPx, returnHomeAfterClose = false, durationMs = 200L)
+            animateToProgress(
+                target = 0f,
+                screenWidthPx = screenWidthPx,
+                returnHomeAfterClose = false,
+                launchNativeOnOpen = false,
+                durationMs = 200L
+            )
+        }
+    }
+
+    // === Reverse Card Slide-Back from Native Google App Back to Stock Launcher ===
+    fun beginReverseDragToHome(screenWidthPx: Int) {
+        if (!Settings.canDrawOverlays(context)) return
+        ensureAttached()
+        reloadSnapshotForProfile(DisplayProfile.fromContext(context).profile)
+        updateCardVisualMode()
+        val root = rootContainer ?: return
+        activeAnimator?.cancel()
+        mainHandler.removeCallbacks(handoffDismissFallback)
+        isWaitingForNativeHandoff = false
+        isShowing = false
+        setWindowFlags(focusable = false, touchable = false)
+        root.alpha = 1f
+        root.visibility = View.VISIBLE
+        applyDragProgress(1f, screenWidthPx)
+        // Immediately place the real stock Home Screen underneath with ZERO animation!
+        GoogleIntentLauncher.launchHomeNoAnim(context)
+    }
+
+    fun updateReverseDragToHome(dragLeftPx: Float, screenWidthPx: Int) {
+        if (screenWidthPx <= 0) return
+        val progress = (1f - dragLeftPx / screenWidthPx.toFloat()).coerceIn(0f, 1f)
+        applyDragProgress(progress, screenWidthPx)
+    }
+
+    /**
+     * Returns true if the reverse drag completed returning to the launcher (progress <= 0.50f),
+     * or false if it snapped back open into Google App (progress > 0.50f).
+     */
+    fun endReverseDragToHome(dragLeftPx: Float, screenWidthPx: Int): Boolean {
+        val progress = if (screenWidthPx > 0) (1f - dragLeftPx / screenWidthPx.toFloat()).coerceIn(0f, 1f) else 0f
+        return if (progress <= 0.50f) {
+            animateToProgress(
+                target = 0f,
+                screenWidthPx = screenWidthPx,
+                returnHomeAfterClose = false, // Home is already underneath!
+                launchNativeOnOpen = false,
+                durationMs = 190L
+            )
+            true
+        } else {
+            // Did not pass halfway -> spring card back open & restore Google App cleanly
+            animateToProgress(
+                target = 1f,
+                screenWidthPx = screenWidthPx,
+                returnHomeAfterClose = false,
+                launchNativeOnOpen = true,
+                durationMs = 190L
+            )
+            false
         }
     }
 
@@ -460,10 +604,11 @@ class GoogleFeedOverlayController(
         lastAutoTriggerMs = now
 
         ensureAttached()
+        reloadSnapshotForProfile(DisplayProfile.fromContext(context).profile)
         updateCardVisualMode()
-        if (!isPrewarmed) {
+        if (!prefs.feedLaunchNativeGoogleApp && !isWebPrewarmed) {
             webView?.loadUrl(FEED_URL)
-            isPrewarmed = true
+            isWebPrewarmed = true
         }
 
         val root = rootContainer ?: return
@@ -475,13 +620,19 @@ class GoogleFeedOverlayController(
         root.alpha = 1f
         root.visibility = View.VISIBLE
         applyDragProgress(0f, widthPx)
-        animateToProgress(1f, widthPx, returnHomeAfterClose = false, durationMs = 240L)
+        animateToProgress(
+            target = 1f,
+            screenWidthPx = widthPx,
+            returnHomeAfterClose = false,
+            launchNativeOnOpen = prefs.feedLaunchNativeGoogleApp,
+            durationMs = 230L
+        )
     }
 
     fun onNativeGoogleAppReady() {
         if (isWaitingForNativeHandoff) {
             mainHandler.removeCallbacks(handoffDismissFallback)
-            mainHandler.postDelayed({ finishNativeHandoffCrossFade() }, 70L)
+            mainHandler.postDelayed({ finishNativeHandoffCrossFade() }, 65L)
         }
     }
 
@@ -510,7 +661,7 @@ class GoogleFeedOverlayController(
         if (!isShowing && root.visibility != View.VISIBLE) return
         lastAutoTriggerMs = System.currentTimeMillis()
         val widthPx = DisplayProfile.fromContext(context).widthPx.coerceAtLeast(1)
-        animateToProgress(0f, widthPx, returnHomeAfterClose = returnHome, durationMs = 210L)
+        animateToProgress(0f, widthPx, returnHomeAfterClose = returnHome, launchNativeOnOpen = false, durationMs = 210L)
     }
 
     private fun applyDragProgress(progress: Float, screenWidthPx: Int) {
@@ -520,8 +671,8 @@ class GoogleFeedOverlayController(
         val scrim = scrimView
 
         card.translationX = -screenWidthPx.toFloat() * (1f - clamped)
-        card.alpha = (0.45f + 0.55f * clamped).coerceIn(0.45f, 1f)
-        scrim?.alpha = 0.55f * clamped
+        card.alpha = (0.50f + 0.50f * clamped).coerceIn(0.50f, 1f)
+        scrim?.alpha = 0.52f * clamped
         card.invalidateOutline()
     }
 
@@ -529,18 +680,17 @@ class GoogleFeedOverlayController(
         target: Float,
         screenWidthPx: Int,
         returnHomeAfterClose: Boolean,
-        durationMs: Long = 210L
+        launchNativeOnOpen: Boolean,
+        durationMs: Long = 200L
     ) {
         activeAnimator?.cancel()
         val start = currentProgress
         val opening = target >= 0.5f
 
-        // Start launching real Google App right as the card begins its final snap to 100%
-        // so Google App is already rendering behind our card with ZERO transition flicker!
-        val launchNative = opening && prefs.feedLaunchNativeGoogleApp
-        if (launchNative) {
+        if (opening && launchNativeOnOpen) {
             isWaitingForNativeHandoff = true
             GoogleIntentLauncher.launchGoogleAppNoAnim(context)
+            onOpenedNativeGoogleApp()
         }
 
         val anim = ValueAnimator.ofFloat(start, target).apply {
@@ -554,8 +704,7 @@ class GoogleFeedOverlayController(
                     activeAnimator = null
                     if (opening) {
                         applyDragProgress(1f, screenWidthPx)
-                        if (launchNative) {
-                            // Hold card briefly until Google App window draws underneath, then cross-fade cleanly
+                        if (launchNativeOnOpen) {
                             mainHandler.removeCallbacks(handoffDismissFallback)
                             mainHandler.postDelayed(handoffDismissFallback, 240L)
                         } else {
@@ -569,11 +718,7 @@ class GoogleFeedOverlayController(
                         rootContainer?.visibility = View.GONE
                         applyDragProgress(0f, screenWidthPx)
                         if (returnHomeAfterClose) {
-                            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                                addCategory(Intent.CATEGORY_HOME)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            runCatching { context.startActivity(homeIntent) }
+                            GoogleIntentLauncher.launchHomeNoAnim(context)
                         }
                     }
                 }
@@ -625,16 +770,16 @@ class GoogleFeedOverlayController(
         rootContainer = null
         scrimView = null
         cardContainer = null
+        darkGlassFallback = null
         webColumn = null
         snapshotImageView = null
         isAttached = false
-        isPrewarmed = false
+        isWebPrewarmed = false
         isShowing = false
         isWaitingForNativeHandoff = false
     }
 
     companion object {
         private const val FEED_URL = "https://www.google.com/"
-        private const val SNAPSHOT_FILENAME = "google_app_snap.png"
     }
 }

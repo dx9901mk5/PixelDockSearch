@@ -8,6 +8,8 @@ interface ITaskMonitorService {
     boolean launchGoogleAppLens();
     boolean prewarmGoogleApp();
     boolean captureScreenToPath(String outputPath);
+    byte[] captureScreenJpeg(int maxWidth, int quality);
+    boolean isLauncherDrawerOrPopupVisible();
     void setTouchCallback(ITouchEventCallback callback);
     void destroy();
 }

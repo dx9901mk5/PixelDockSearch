@@ -128,12 +128,14 @@ class SearchAccessibilityService : AccessibilityService() {
                         LauncherGestureBus.dispatchVerticalScroll(deltaY)
                     }
                     inspectLauncherHierarchy(pkg, cls, force = false)
+                    schedulePostAnimationRescan(pkg, cls)
                 }
             }
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 if (isLauncher) {
                     inspectLauncherHierarchy(pkg, cls, force = false)
+                    schedulePostAnimationRescan(pkg, cls)
                 } else if (pkg == "com.google.android.googlequicksearchbox" &&
                     LauncherGestureBus.isAutoClickGoogleLensPending()
                 ) {
@@ -144,6 +146,18 @@ class SearchAccessibilityService : AccessibilityService() {
     }
 
     private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingRescanRunnable: Runnable? = null
+
+    private fun schedulePostAnimationRescan(pkg: String, cls: String) {
+        pendingRescanRunnable?.let { retryHandler.removeCallbacks(it) }
+        val r = Runnable {
+            if (AccessibilityForegroundState.foregroundPackage == pkg) {
+                inspectLauncherHierarchy(pkg, cls, force = true)
+            }
+        }
+        pendingRescanRunnable = r
+        retryHandler.postDelayed(r, 260L)
+    }
 
     private fun scheduleLensAutoClickRetries() {
         tryClickGoogleAppLensButton()
@@ -244,6 +258,22 @@ class SearchAccessibilityService : AccessibilityService() {
             rootInActiveWindow
         } catch (_: Throwable) {
             null
+        }
+
+        // Fast native full-tree text check (NOT capped by BFS node limit!) with isVisibleToUser verification
+        if (activeRoot != null) {
+            if (!drawerDetected) {
+                drawerDetected = hasAnyVisibleTextNode(
+                    activeRoot,
+                    listOf("搜尋應用程式", "全部應用程式", "建議的應用程式", "原子元件", "搜索应用", "全部应用", "Search apps", "All apps")
+                )
+            }
+            if (!popupDetected) {
+                popupDetected = hasAnyVisibleTextNode(
+                    activeRoot,
+                    listOf("解除安裝", "應用程式資訊", "圖示樣式", "卸载", "应用信息", "Uninstall", "App info")
+                )
+            }
         }
 
         if (activeRoot != null) {
@@ -370,6 +400,22 @@ class SearchAccessibilityService : AccessibilityService() {
             isAppDrawer = drawerDetected,
             isPopupOrMenu = popupDetected
         )
+    }
+
+    private fun hasAnyVisibleTextNode(root: AccessibilityNodeInfo, queries: List<String>): Boolean {
+        for (q in queries) {
+            val matches = try {
+                root.findAccessibilityNodeInfosByText(q)
+            } catch (_: Throwable) {
+                null
+            } ?: continue
+            for (node in matches) {
+                if (node.isVisibleToUser) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private fun hasPopupTexts(root: AccessibilityNodeInfo): Boolean {

@@ -91,6 +91,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     private var layoutParams: WindowManager.LayoutParams? = null
     private var leftEdgeView: View? = null
     private var leftEdgeParams: WindowManager.LayoutParams? = null
+    private var rightEdgeReturnView: View? = null
+    private var rightEdgeReturnParams: WindowManager.LayoutParams? = null
+    private var isGoogleAppFromFeed = false
 
     // Floating Top Page-Confirmation HUD (for selecting First Home Page vs Minus-One Screen)
     private var pagePickerView: LinearLayout? = null
@@ -159,7 +162,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
     private val captureGoogleSnapshotRunnable = Runnable {
         val now = System.currentTimeMillis()
-        if (!isRunning || !isScreenInteractive || now - lastSnapshotCaptureMs < 15_000L) return@Runnable
+        if (!isRunning || !isScreenInteractive || now - lastSnapshotCaptureMs < 4_000L) return@Runnable
         bgExecutor.execute {
             val fg = if (AccessibilityForegroundState.isConnected) {
                 AccessibilityForegroundState.foregroundPackage
@@ -167,10 +170,11 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 shizukuManager.getForegroundPackage().orEmpty()
             }
             if (fg == GoogleIntentLauncher.GOOGLE_APP_PACKAGE) {
-                val ok = shizukuManager.captureScreenToPath(feedController.getSnapshotFilePath())
-                if (ok) {
+                val snap = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
+                val jpeg = shizukuManager.captureScreenJpeg(maxWidth = 540, quality = 78)
+                if (jpeg != null) {
                     lastSnapshotCaptureMs = System.currentTimeMillis()
-                    feedController.reloadSnapshotFromDisk()
+                    feedController.saveSnapshotBytes(jpeg, snap.profile)
                 }
             }
         }
@@ -247,6 +251,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     mainHandler.post {
                         if (shizukuPkg == GoogleIntentLauncher.GOOGLE_APP_PACKAGE) {
                             onGoogleAppEntered()
+                        } else if (shizukuPkg.isNotBlank() && isGoogleAppFromFeed && !feedController.isOverlayShowing()) {
+                            isGoogleAppFromFeed = false
+                            updateRightEdgeReturnVisibility(false)
                         }
                         if (pagePickerView != null && shizukuPkg.isNotBlank() && !AccessibilityForegroundState.isConnected) {
                             latestObservedPkg = shizukuPkg
@@ -292,6 +299,8 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     isScreenInteractive = false
                     isHiddenByDrawer = false
                     isHiddenByPopup = false
+                    isGoogleAppFromFeed = false
+                    updateRightEdgeReturnVisibility(false)
                     drawerScrollOffsetPx = 0f
                     setOverlayVisibility(false)
                     feedController.dismiss(returnHome = false)
@@ -314,7 +323,10 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         isScreenInteractive = powerManager.isInteractive
-        feedController = GoogleFeedOverlayController(this, windowManager, prefs)
+        feedController = GoogleFeedOverlayController(this, windowManager, prefs) {
+            isGoogleAppFromFeed = true
+            mainHandler.post { updateRightEdgeReturnVisibility(true) }
+        }
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
@@ -432,19 +444,31 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 animateSlideOutUpward(durationMs = 190L)
             } else if (!isAppDrawer) {
                 // Instant 0ms hide on app launch or long-press popup menu (Fig 1)
+                if (AccessibilityForegroundState.foregroundPackage != GoogleIntentLauncher.GOOGLE_APP_PACKAGE &&
+                    !feedController.isOverlayShowing()
+                ) {
+                    isGoogleAppFromFeed = false
+                    updateRightEdgeReturnVisibility(false)
+                }
                 setOverlayVisibility(false)
             }
         } else {
             drawerScrollOffsetPx = 0f
+            isGoogleAppFromFeed = false
+            updateRightEdgeReturnVisibility(false)
             setOverlayVisibility(true, slideDownRestore = wasDrawer)
         }
     }
 
     override fun onGoogleAppEntered() {
         feedController.onNativeGoogleAppReady()
-        // Silently refresh our cached Google App screenshot once settled so next Feed swipe looks pixel-identical!
+        if (isGoogleAppFromFeed) {
+            updateRightEdgeReturnVisibility(true)
+        }
+        // Silently refresh our cached Google App screenshot so next Feed swipe shows the real Google App!
         mainHandler.removeCallbacks(captureGoogleSnapshotRunnable)
-        mainHandler.postDelayed(captureGoogleSnapshotRunnable, 1400L)
+        mainHandler.postDelayed(captureGoogleSnapshotRunnable, 1100L)
+        mainHandler.postDelayed(captureGoogleSnapshotRunnable, 2800L)
     }
 
     override fun onCurrentPageSnapshotChanged(pkg: String, cls: String, pageSignature: String) {
@@ -791,10 +815,91 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             isOverlayAttached = true
             isOverlayVisible = false
             attachLeftEdgeView()
+            attachRightEdgeReturnView()
             refreshDisplayProfileAndLayout()
         } catch (_: Throwable) {
             isOverlayAttached = false
         }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun attachRightEdgeReturnView() {
+        if (rightEdgeReturnView != null) return
+        val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this)
+        val density = snapshot.density
+        val edgeWidthPx = (28 * density).roundToInt()
+        val maxExcludedHeightPx = (196 * density).roundToInt()
+        val edgeHeightPx = min((snapshot.heightPx * 0.48f).roundToInt(), maxExcludedHeightPx)
+
+        val edge = View(this)
+        edge.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && v.width > 0 && v.height > 0) {
+                v.systemGestureExclusionRects = listOf(Rect(0, 0, v.width, v.height))
+            }
+        }
+
+        val params = WindowManager.LayoutParams(
+            edgeWidthPx,
+            edgeHeightPx,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+
+        var downX = 0f
+        var draggingReturn = false
+        val startThreshold = 10f * density
+
+        edge.setOnTouchListener { v, event ->
+            val snap = currentSnapshot ?: DisplayProfile.fromContext(this)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    draggingReturn = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dragLeftPx = (downX - event.rawX).coerceAtLeast(0f)
+                    if (!draggingReturn && dragLeftPx > startThreshold) {
+                        draggingReturn = true
+                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        feedController.beginReverseDragToHome(snap.widthPx)
+                    }
+                    if (draggingReturn) {
+                        feedController.updateReverseDragToHome(dragLeftPx, snap.widthPx)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (draggingReturn) {
+                        val dragLeftPx = (downX - event.rawX).coerceAtLeast(0f)
+                        val returnedHome = feedController.endReverseDragToHome(dragLeftPx, snap.widthPx)
+                        if (returnedHome) {
+                            isGoogleAppFromFeed = false
+                            updateRightEdgeReturnVisibility(false)
+                        }
+                    }
+                    draggingReturn = false
+                    true
+                }
+                else -> false
+            }
+        }
+
+        edge.visibility = View.GONE
+        try {
+            windowManager.addView(edge, params)
+            rightEdgeReturnView = edge
+            rightEdgeReturnParams = params
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun updateRightEdgeReturnVisibility(show: Boolean) {
+        rightEdgeReturnView?.visibility = if (show && isGoogleAppFromFeed) View.VISIBLE else View.GONE
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -884,8 +989,16 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             } catch (_: Throwable) {
             }
         }
+        rightEdgeReturnView?.let { edge ->
+            try {
+                windowManager.removeViewImmediate(edge)
+            } catch (_: Throwable) {
+            }
+        }
         leftEdgeView = null
         leftEdgeParams = null
+        rightEdgeReturnView = null
+        rightEdgeReturnParams = null
         overlayRoot = null
         isOverlayAttached = false
         isOverlayVisible = false
