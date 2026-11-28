@@ -268,5 +268,8 @@ object AccessibilityForegroundState {
     var currentPageSignature: String = ""
 
     @Volatile
+    var currentHomePageIndex: Int = -1
+
+    @Volatile
     var isOnConfirmedFirstPage: Boolean = true
 }

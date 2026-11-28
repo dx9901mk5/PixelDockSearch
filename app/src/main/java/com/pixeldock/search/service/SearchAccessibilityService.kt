@@ -94,13 +94,17 @@ class SearchAccessibilityService : AccessibilityService() {
                 if (cls.contains("Toast", ignoreCase = true) ||
                     cls.contains("InputMethod", ignoreCase = true) ||
                     pkg == "android" ||
+                    pkg == "com.vivo.hiboard" ||
                     pkg.contains("inputmethod", ignoreCase = true) ||
                     pkg.contains("screenrecorder", ignoreCase = true) ||
                     pkg.contains("smartshot", ignoreCase = true) ||
                     pkg.contains("floatingball", ignoreCase = true) ||
                     pkg.contains("originisland", ignoreCase = true) ||
                     pkg.contains("daemonservice", ignoreCase = true) ||
-                    pkg.contains("livewallpaper", ignoreCase = true)
+                    pkg.contains("livewallpaper", ignoreCase = true) ||
+                    pkg.contains("upslide", ignoreCase = true) ||
+                    pkg.contains("fanrecent", ignoreCase = true) ||
+                    pkg.contains("pixelvoiceime", ignoreCase = true)
                 ) {
                     return
                 }
@@ -305,16 +309,26 @@ class SearchAccessibilityService : AccessibilityService() {
         var pageIndicatorText = ""
         val topTokens = ArrayList<String>(4)
 
+        val activeRoot = try {
+            rootInActiveWindow
+        } catch (_: Throwable) {
+            null
+        }
+        // If activeRoot is momentarily null mid-animation while still on launcher, do NOT flip visibility!
+        if (activeRoot == null) {
+            return
+        }
+
         // Check active windows for:
-        // 1. Other apps in Floating Window / Mini-Window / Freeform / PiP / Split-Screen mode
-        // 2. Floating launcher popup menus (long-press shortcut menu)
-        // Note: Overlay-style OEM Minus-One sub-windows (e.g. HiBoard type=2) are intentionally NOT
-        // treated as hiding triggers here so desktop page swiping stays 100% rock-solid without flicker.
+        // 1. Other apps in Floating Window / Mini-Window / Freeform / PiP / Split-Screen mode (>= 25% W x 20% H)
+        // 2. Floating launcher popup menus (must contain real popup text like Uninstall/App Info; never Taskbar/DockPanel)
         try {
             val displayMetrics = resources.displayMetrics
             val screenW = displayMetrics.widthPixels
             val screenH = displayMetrics.heightPixels
             val screenArea = screenW.toLong() * screenH.toLong()
+            val minFloatW = (screenW * 0.25f).toInt().coerceAtLeast(180)
+            val minFloatH = (screenH * 0.20f).toInt().coerceAtLeast(180)
             val rect = Rect()
             for (win in windows) {
                 val root = win.root ?: continue
@@ -328,11 +342,14 @@ class SearchAccessibilityService : AccessibilityService() {
                     winPkg != "android" &&
                     winPkg != "com.vivo.hiboard" &&
                     !winPkg.contains("inputmethod", ignoreCase = true) &&
-                    !winPkg.contains("livewallpaper", ignoreCase = true)
+                    !winPkg.contains("livewallpaper", ignoreCase = true) &&
+                    !winPkg.contains("upslide", ignoreCase = true) &&
+                    !winPkg.contains("fanrecent", ignoreCase = true) &&
+                    !winPkg.contains("pixelvoiceime", ignoreCase = true)
                 ) {
                     win.getBoundsInScreen(rect)
-                    // Visible floating / mini-window / freeform / PiP / split-screen app on screen
-                    if (rect.width() >= 120 && rect.height() >= 120 &&
+                    // Only real floating / mini-window / freeform / PiP / split-screen apps (never tiny side-edge tools)
+                    if (rect.width() >= minFloatW && rect.height() >= minFloatH &&
                         rect.right > 0 && rect.left < screenW &&
                         rect.bottom > 0 && rect.top < screenH
                     ) {
@@ -341,12 +358,15 @@ class SearchAccessibilityService : AccessibilityService() {
                     }
                 }
                 if (winPkg == pkg) {
+                    if (title.contains("Taskbar", ignoreCase = true) ||
+                        title.contains("DockPanel", ignoreCase = true)
+                    ) {
+                        continue
+                    }
                     win.getBoundsInScreen(rect)
                     val winArea = rect.width().toLong() * rect.height().toLong()
                     if (winArea in 1L until (screenArea * 65L / 100L)) {
-                        if (LauncherGestureBus.isLauncherPopupClassOrId(title) ||
-                            hasAnyVisibleTextNode(root, POPUP_QUERIES)
-                        ) {
+                        if (hasAnyVisibleTextNode(root, POPUP_QUERIES)) {
                             popupDetected = true
                         }
                     }
@@ -356,32 +376,29 @@ class SearchAccessibilityService : AccessibilityService() {
         } catch (_: Throwable) {
         }
 
-        val activeRoot = try {
-            rootInActiveWindow
-        } catch (_: Throwable) {
-            null
+        // Fast native full-tree text check (NOT capped by BFS limit) with strict on-screen bounds verification
+        if (!drawerDetected) {
+            drawerDetected = hasAnyVisibleTextNode(activeRoot, DRAWER_QUERIES)
+        }
+        if (!popupDetected) {
+            popupDetected = hasAnyVisibleTextNode(activeRoot, POPUP_QUERIES)
+        }
+        if (!minusOneDetected) {
+            minusOneDetected = hasAnyVisibleTextNode(activeRoot, MINUS_ONE_QUERIES)
         }
 
-        // Fast native full-tree text check (NOT capped by BFS limit) with isVisibleToUser verification
-        if (activeRoot != null) {
-            if (!drawerDetected) {
-                drawerDetected = hasAnyVisibleTextNode(activeRoot, DRAWER_QUERIES)
-            }
-            if (!popupDetected) {
-                popupDetected = hasAnyVisibleTextNode(activeRoot, POPUP_QUERIES)
-            }
-            if (!minusOneDetected) {
-                minusOneDetected = hasAnyVisibleTextNode(activeRoot, MINUS_ONE_QUERIES)
-            }
-        }
-
-        // Only run lightweight BFS (max 35 nodes) for page indicator / signature when neither drawer nor popup is open
-        if (activeRoot != null && !drawerDetected && !popupDetected) {
+        var detectedPageIndex = -1
+        // Scan up to 140 nodes strictly filtering ON-SCREEN elements for accurate Page 1 vs Page 2/3 detection
+        if (!drawerDetected && !popupDetected) {
             try {
+                val dm = resources.displayMetrics
+                val screenW = dm.widthPixels
+                val screenH = dm.heightPixels
+                val nodeRect = Rect()
                 val queue = ArrayDeque<AccessibilityNodeInfo>()
                 queue.add(activeRoot)
                 var visited = 0
-                while (queue.isNotEmpty() && visited < 35) {
+                while (queue.isNotEmpty() && visited < 140) {
                     val node = queue.removeFirst()
                     visited++
 
@@ -394,6 +411,7 @@ class SearchAccessibilityService : AccessibilityService() {
                         break
                     }
 
+                    // Detect page indicator text anywhere in the tree (e.g. "第 1 頁，共 5 頁", "Page 2 of 5", "1/5")
                     if (pageIndicatorText.isEmpty() && desc.isNotEmpty() &&
                         (desc.contains("頁") || desc.contains("页") ||
                             desc.contains("主螢幕") || desc.contains("主屏幕") ||
@@ -401,16 +419,43 @@ class SearchAccessibilityService : AccessibilityService() {
                             desc.contains("Page ", ignoreCase = true))
                     ) {
                         pageIndicatorText = desc
+                        detectedPageIndex = parsePageIndexFromText(desc)
                     }
 
-                    if (topTokens.size < 3 && text.length in 2..16 && !text.all { it.isDigit() || it == ':' }) {
-                        topTokens.add(text)
+                    // Detect page indicator dot row near bottom of screen (child index of selected dot = 0-based page)
+                    if (detectedPageIndex < 0 && node.childCount in 2..12) {
+                        node.getBoundsInScreen(nodeRect)
+                        if (nodeRect.top > (screenH * 0.55f) && nodeRect.height() in 6..(screenH / 10)) {
+                            var selectedIdx = -1
+                            var selectedCount = 0
+                            for (i in 0 until node.childCount) {
+                                val c = node.getChild(i) ?: continue
+                                if (c.isSelected || c.isChecked) {
+                                    selectedIdx = i
+                                    selectedCount++
+                                }
+                            }
+                            if (selectedCount == 1 && selectedIdx >= 0) {
+                                detectedPageIndex = selectedIdx
+                            }
+                        }
+                    }
+
+                    // Only include strictly ON-SCREEN icon/widget labels in topTokens so Page 1 & Page 2 have distinct signatures!
+                    if (topTokens.size < 4 && text.length in 2..16 && !text.all { it.isDigit() || it == ':' } && node.isVisibleToUser) {
+                        node.getBoundsInScreen(nodeRect)
+                        if (nodeRect.width() > 0 && nodeRect.height() > 0 &&
+                            nodeRect.centerX() in 0 until screenW &&
+                            nodeRect.centerY() in 0 until (screenH * 0.82f).toInt()
+                        ) {
+                            topTokens.add(text)
+                        }
                     }
 
                     val childCount = node.childCount
                     for (i in 0 until childCount) {
                         val child = node.getChild(i) ?: continue
-                        if (visited + queue.size < 45) {
+                        if (visited + queue.size < 160) {
                             queue.addLast(child)
                         }
                     }
@@ -421,10 +466,12 @@ class SearchAccessibilityService : AccessibilityService() {
 
         val pageSig = when {
             pageIndicatorText.isNotEmpty() -> "$pkg|$pageIndicatorText"
+            detectedPageIndex >= 0 -> "$pkg|page_${detectedPageIndex + 1}"
             topTokens.isNotEmpty() -> "$pkg|${topTokens.joinToString(",")}"
             else -> "$pkg|$cls"
         }
 
+        AccessibilityForegroundState.currentHomePageIndex = detectedPageIndex
         AccessibilityForegroundState.currentPageSignature = pageSig
         LauncherGestureBus.dispatchPageSnapshot(pkg, cls, pageSig)
 
@@ -441,8 +488,12 @@ class SearchAccessibilityService : AccessibilityService() {
         }
 
         val confirmedFirstSig = prefs.customFirstPageSignature
-        AccessibilityForegroundState.isOnConfirmedFirstPage =
-            !minusOneDetected && (confirmedFirstSig.isBlank() || pageSig == confirmedFirstSig)
+        AccessibilityForegroundState.isOnConfirmedFirstPage = when {
+            minusOneDetected -> false
+            confirmedFirstSig.isNotBlank() && !confirmedFirstSig.endsWith("|") -> pageSig == confirmedFirstSig
+            detectedPageIndex >= 0 -> detectedPageIndex == 0
+            else -> true
+        }
 
         val wasDrawer = AccessibilityForegroundState.isAppDrawerOpen
         AccessibilityForegroundState.isLauncherPopupOpen = popupDetected
@@ -475,6 +526,21 @@ class SearchAccessibilityService : AccessibilityService() {
             isAppDrawer = drawerDetected,
             isPopupOrMenu = popupDetected
         )
+    }
+
+    private fun parsePageIndexFromText(desc: String): Int {
+        val patterns = listOf(
+            Regex("第\\s*(\\d+)\\s*[頁页]"),
+            Regex("Page\\s+(\\d+)", RegexOption.IGNORE_CASE),
+            Regex("\\b(\\d+)\\s*/\\s*\\d+"),
+            Regex("\\b(\\d+)\\s+of\\s+\\d+", RegexOption.IGNORE_CASE)
+        )
+        for (p in patterns) {
+            val m = p.find(desc)
+            val num = m?.groupValues?.getOrNull(1)?.toIntOrNull()
+            if (num != null && num >= 1) return num - 1
+        }
+        return -1
     }
 
     private fun hasAnyVisibleTextNode(root: AccessibilityNodeInfo, queries: List<String>): Boolean {

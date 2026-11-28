@@ -1549,22 +1549,22 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     }
 
     private fun isOnLeftmostHomePageForBarFeed(): Boolean {
-        if (!AccessibilityForegroundState.isConnected) return true
+        if (!AccessibilityForegroundState.isConnected) {
+            // Accessibility is OFF (e.g., Shizuku-only mode on tablet): allow Feed swipe if user hasn't marked a specific page
+            return true
+        }
         if (AccessibilityForegroundState.isMinusOneActive) return false
         val sig = AccessibilityForegroundState.currentPageSignature
         val confirmedFirst = prefs.customFirstPageSignature
         if (confirmedFirst.isNotBlank() && !confirmedFirst.endsWith("|")) {
             return sig == confirmedFirst
         }
-        // Auto-detect leftmost page vs right pages from launcher page indicator when not manually marked
-        if (sig.contains("第 1 頁") || sig.contains("第1頁") ||
-            sig.contains("第 1 页") || sig.contains("第1页") ||
-            sig.contains("Page 1", ignoreCase = true) ||
-            sig.contains("1 of", ignoreCase = true) ||
-            Regex("\\b1\\s*/\\s*\\d+").containsMatchIn(sig)
-        ) {
-            return true
+        // Use exact 0-based home page index from page indicator text or selected dot index
+        val idx = AccessibilityForegroundState.currentHomePageIndex
+        if (idx >= 0) {
+            return idx == 0
         }
+        // Fallback regex check on page signature
         if (Regex("第\\s*[2-9]\\d*\\s*[頁页]|Page\\s+[2-9]|\\b[2-9]\\s*/\\s*\\d+|\\b[2-9]\\s+of\\b", RegexOption.IGNORE_CASE)
                 .containsMatchIn(sig)
         ) {
@@ -1573,7 +1573,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         return true
     }
 
-    private fun updateLeftEdgeVisibility(homeVisible: Boolean, isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
+    private fun updateLeftEdgeVisibility(@Suppress("UNUSED_PARAMETER") homeVisible: Boolean, @Suppress("UNUSED_PARAMETER") isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
         // Left-edge strip intentionally retired; Google Feed is launched exclusively from the bottom Search Bar on the leftmost page.
         leftEdgeView?.visibility = View.GONE
     }
