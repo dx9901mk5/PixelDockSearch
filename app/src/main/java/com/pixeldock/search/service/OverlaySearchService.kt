@@ -368,6 +368,24 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 feedController.prewarm()
             }
         }
+        NativeGoogleFeedBridge.onOverlayScrollProgress = { progress ->
+            if (!isCalibrationMode && isOverlayAttached && isOverlayVisible) {
+                overlayRoot?.alpha = (1f - progress * 2.2f).coerceIn(0f, 1f)
+            }
+        }
+        NativeGoogleFeedBridge.onOverlayClosed = {
+            if (!isCalibrationMode && isOverlayAttached) {
+                overlayRoot?.alpha = 1f
+                if (AccessibilityForegroundState.isConnected &&
+                    !AccessibilityForegroundState.isAppDrawerOpen &&
+                    !AccessibilityForegroundState.isLauncherPopupOpen &&
+                    !AccessibilityForegroundState.isMinusOneActive &&
+                    !AccessibilityForegroundState.isSystemOverlay
+                ) {
+                    setOverlayVisibility(true)
+                }
+            }
+        }
         mainHandler.post(pollRunnable)
     }
 
@@ -431,6 +449,8 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         }
         shizukuManager.setTouchCallback(null)
         shizukuManager.stop()
+        NativeGoogleFeedBridge.onOverlayScrollProgress = null
+        NativeGoogleFeedBridge.onOverlayClosed = null
         NativeGoogleFeedBridge.unbind()
         feedController.destroy()
         detachOverlay()
@@ -1259,19 +1279,22 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         lensButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                // Tier 1: Shizuku direct Lens launch (verified Lens focus) + uiautomator tap fallback inside Google App
+                // Tier 1 (<5ms): Direct Google App Lens deep link / exported activity on main thread
+                if (GoogleIntentLauncher.launchGoogleLens(this)) {
+                    return@setOnClickListener
+                }
+                // Tier 2: Fast Shizuku direct am start (no uiautomator delay), then Tier 3 Accessibility auto-tap
                 bgExecutor.execute {
                     val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
                     if (!launchedViaShizuku) {
                         mainHandler.post {
-                            // Tier 2: Accessibility auto-tap Google App's built-in Lens icon (works without Shizuku)
                             if (AccessibilityForegroundState.isConnected) {
                                 LauncherGestureBus.requestAutoClickGoogleLens()
                                 GoogleIntentLauncher.launchGoogleApp(this)
-                            } else if (!GoogleIntentLauncher.launchGoogleLens(this)) {
+                            } else {
                                 Toast.makeText(
                                     this,
-                                    "無法啟動 Google 智慧鏡頭，請確認 Shizuku 或無障礙服務已開啟",
+                                    "無法啟動 Google 智慧鏡頭，請確認已安裝 Google App 並開啟 Shizuku 或無障礙服務",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }

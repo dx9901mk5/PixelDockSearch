@@ -176,46 +176,19 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
     }
 
     override fun launchGoogleAppLens(): Boolean {
-        // 1. Try direct Lens activities / deep link and STRICTLY verify window focus actually entered Lens
+        // Fast direct Lens activity / deep-link launch (zero sleep / zero uiautomator hang).
         val directCommands = listOf(
-            "am start -a android.intent.action.VIEW -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity",
+            "am start -a android.intent.action.VIEW -d 'googleapp://lens' com.google.android.googlequicksearchbox",
+            "am start -a com.google.android.googlequicksearchbox.LENS com.google.android.googlequicksearchbox",
+            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensExportedActivity",
+            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity",
             "am start -a android.intent.action.VIEW -d 'googlelens://' com.google.android.googlequicksearchbox",
-            "am start -a android.intent.action.VIEW -d 'googlelens://'",
             "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity"
         )
         for (cmd in directCommands) {
             val out = runShell(cmd)
-            if (isAmStartSuccess(out) && didLensFocusOpen()) {
+            if (isAmStartSuccess(out)) {
                 return true
-            }
-        }
-
-        // 2. Fallback: Open Google App itself, inspect its live UI hierarchy via uiautomator, and tap its built-in Lens icon!
-        val launchOut = runShell(
-            "monkey -p com.google.android.googlequicksearchbox -c android.intent.category.LAUNCHER 1 2>/dev/null"
-        )
-        if (!launchOut.contains("Events injected", ignoreCase = true)) {
-            runShell("am start -n com.google.android.googlequicksearchbox/com.google.android.googlequicksearchbox.SearchActivity")
-        }
-
-        // Retry tapping Lens button inside Google App up to 3 times as UI finishes loading
-        val dumpFile = "/data/local/tmp/pds_lens_ui.xml"
-        for (attempt in 0 until 3) {
-            try {
-                Thread.sleep(if (attempt == 0) 650L else 450L)
-            } catch (_: Throwable) {
-                return false
-            }
-            if (didLensFocusOpen()) return true
-
-            runShell("uiautomator dump $dumpFile 2>/dev/null")
-            val xml = runShell("cat $dumpFile 2>/dev/null")
-            val tapPoint = findLensButtonCenter(xml)
-            if (tapPoint != null) {
-                runShell("input tap ${tapPoint.first} ${tapPoint.second}")
-                if (didLensFocusOpen()) {
-                    return true
-                }
             }
         }
         return false

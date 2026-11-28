@@ -46,6 +46,12 @@ object NativeGoogleFeedBridge {
     @Volatile
     private var overlayStatusFlags = 0
 
+    @Volatile
+    var onOverlayScrollProgress: ((Float) -> Unit)? = null
+
+    @Volatile
+    var onOverlayClosed: (() -> Unit)? = null
+
     private var activeHostActivity: WeakReference<GoogleFeedOverlayActivity>? = null
     private var isWindowAttached = false
     private var isDragSessionActive = false
@@ -65,6 +71,7 @@ object NativeGoogleFeedBridge {
     private val overlayCallback = object : ILauncherOverlayCallback.Stub() {
         override fun overlayScrollChanged(progress: Float) {
             mainHandler.post {
+                onOverlayScrollProgress?.invoke(progress)
                 if (progress > 0.08f) {
                     hasReachedVisibleScroll = true
                 }
@@ -73,6 +80,7 @@ object NativeGoogleFeedBridge {
                 if (!isDragSessionActive && hasReachedVisibleScroll && progress <= 0.001f) {
                     hasReachedVisibleScroll = false
                     finishHostActivity()
+                    onOverlayClosed?.invoke()
                 }
             }
         }
@@ -402,9 +410,10 @@ object NativeGoogleFeedBridge {
     }
 
     private fun finishHostActivity() {
-        val host = activeHostActivity?.get() ?: return
-        if (!host.isFinishing && !host.isDestroyed) {
+        val host = activeHostActivity?.get()
+        if (host != null && !host.isFinishing && !host.isDestroyed) {
             host.finishQuietly()
         }
+        onOverlayClosed?.invoke()
     }
 }

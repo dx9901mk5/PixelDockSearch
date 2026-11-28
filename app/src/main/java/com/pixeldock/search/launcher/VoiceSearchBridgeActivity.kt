@@ -16,6 +16,8 @@ class VoiceSearchBridgeActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
 
         val googleVoiceIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             setPackage(GoogleIntentLauncher.GOOGLE_APP_PACKAGE)
@@ -42,7 +44,9 @@ class VoiceSearchBridgeActivity : Activity() {
 
         if (!launched) {
             Toast.makeText(this, "找不到 Google 語音輸入服務", Toast.LENGTH_SHORT).show()
-            finish()
+            finishAndRemoveTask()
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
         }
     }
 
@@ -74,7 +78,7 @@ class VoiceSearchBridgeActivity : Activity() {
                 }
             }
         }
-        finish()
+        finishAndRemoveTask()
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
     }

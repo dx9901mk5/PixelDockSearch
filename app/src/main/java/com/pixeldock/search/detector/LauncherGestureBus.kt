@@ -54,7 +54,13 @@ object LauncherGestureBus {
         "assistantscreen",
         "personalassistant",
         "minusscreen",
-        "minusone"
+        "minusone",
+        "早報",
+        "早报",
+        "小v建議",
+        "小v建议",
+        "全部早報",
+        "全部早报"
     )
 
     private val drawerKeywords = listOf(

@@ -65,18 +65,20 @@ class SearchAccessibilityService : AccessibilityService() {
         val isLauncher = pkg in cachedLaunchers
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 AccessibilityForegroundState.currentWindowClass = cls
 
                 if (pkg == "com.android.systemui") {
-                    val isShadeOrRecents = cls.contains("Notification", ignoreCase = true) ||
-                        cls.contains("StatusBar", ignoreCase = true) ||
+                    // Only treat actual expanded Shade / Lockscreen / Recents as system overlay;
+                    // NEVER hide on status-bar icon updates or screen-recorder timer ticks!
+                    val isShadeOrRecents = cls.contains("NotificationShade", ignoreCase = true) ||
+                        cls.contains("ShadeWindow", ignoreCase = true) ||
                         cls.contains("Recents", ignoreCase = true) ||
                         cls.contains("Keyguard", ignoreCase = true) ||
-                        cls.contains("Bouncer", ignoreCase = true)
-                    AccessibilityForegroundState.isSystemOverlay = isShadeOrRecents
+                        cls.contains("Bouncer", ignoreCase = true) ||
+                        cls.contains("VolumeDialog", ignoreCase = true)
                     if (isShadeOrRecents) {
+                        AccessibilityForegroundState.isSystemOverlay = true
                         AccessibilityForegroundState.isMinusOneActive = false
                         LauncherGestureBus.dispatchForegroundVisibility(
                             shouldShowHomeOverlay = false,
@@ -84,6 +86,16 @@ class SearchAccessibilityService : AccessibilityService() {
                             isPopupOrMenu = false
                         )
                     }
+                    return
+                }
+
+                // Ignore transient overlay/toast/IME windows that do not represent a real foreground app switch
+                if (cls.contains("Toast", ignoreCase = true) ||
+                    cls.contains("InputMethod", ignoreCase = true) ||
+                    pkg.contains("inputmethod", ignoreCase = true) ||
+                    pkg.contains("screenrecorder", ignoreCase = true) ||
+                    pkg.contains("smartshot", ignoreCase = true)
+                ) {
                     return
                 }
 
@@ -306,6 +318,9 @@ class SearchAccessibilityService : AccessibilityService() {
             if (!popupDetected) {
                 popupDetected = hasAnyVisibleTextNode(activeRoot, POPUP_QUERIES)
             }
+            if (!minusOneDetected) {
+                minusOneDetected = hasAnyVisibleTextNode(activeRoot, MINUS_ONE_QUERIES)
+            }
         }
 
         // Only run lightweight BFS (max 35 nodes) for page indicator / signature when neither drawer nor popup is open
@@ -474,6 +489,12 @@ class SearchAccessibilityService : AccessibilityService() {
             "圖示樣式",
             "卸载",
             "Uninstall"
+        )
+        private val MINUS_ONE_QUERIES = listOf(
+            "全部早報",
+            "全部早报",
+            "小V建議",
+            "小V建议"
         )
     }
 }
