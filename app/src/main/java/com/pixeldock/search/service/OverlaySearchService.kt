@@ -280,16 +280,49 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             }
 
             // When Accessibility is connected, it drives instant <16ms events via LauncherGestureBus;
-            // we only keep a light safety heartbeat unless the page picker HUD is open.
+            // ALSO run a lightweight Shizuku cross-check when Shizuku is connected so overlay-style
+            // OEM Minus-One sub-windows (e.g., Window{com.vivo.hiboard:... u0 HiBoard type=2}) hide in 0ms!
             if (AccessibilityForegroundState.isConnected && pagePickerView == null) {
-                val show = !AccessibilityForegroundState.isSystemOverlay &&
+                val a11yShow = !AccessibilityForegroundState.isSystemOverlay &&
                     !AccessibilityForegroundState.isAppDrawerOpen &&
                     !AccessibilityForegroundState.isLauncherPopupOpen &&
                     !AccessibilityForegroundState.isMinusOneActive &&
                     AccessibilityForegroundState.foregroundPackage in detector.getLauncherPackages()
+
+                if (shizukuManager.taskService != null && pollInFlight.compareAndSet(false, true)) {
+                    bgExecutor.execute {
+                        val shizukuPkg = try {
+                            shizukuManager.getForegroundPackage().orEmpty()
+                        } catch (_: Throwable) {
+                            ""
+                        }
+                        pollInFlight.set(false)
+                        mainHandler.post {
+                            val isShizukuMinusOne = shizukuPkg == "com.vivo.hiboard" ||
+                                LauncherGestureBus.isMinusOnePackageOrClass(
+                                    shizukuPkg, "", prefs.customMinusOnePackage, prefs.customMinusOneSignature, "", detector.getLauncherPackages()
+                                )
+                            val isShizukuNonHome = shizukuPkg.isNotBlank() &&
+                                shizukuPkg != packageName &&
+                                shizukuPkg !in detector.getLauncherPackages()
+                            val finalShow = a11yShow && !isShizukuMinusOne && !isShizukuNonHome
+                            if (isShizukuMinusOne) {
+                                AccessibilityForegroundState.isMinusOneActive = true
+                            }
+                            if (!isHiddenByDrawer && !isHiddenByPopup) {
+                                setOverlayVisibility(finalShow, isMinusOne = isShizukuMinusOne || AccessibilityForegroundState.isMinusOneActive)
+                            } else if (!finalShow) {
+                                setOverlayVisibility(false, isMinusOne = isShizukuMinusOne || AccessibilityForegroundState.isMinusOneActive)
+                            }
+                        }
+                    }
+                    mainHandler.postDelayed(this, 180L)
+                    return
+                }
+
                 if (!isHiddenByDrawer && !isHiddenByPopup) {
-                    setOverlayVisibility(show)
-                } else if (!show) {
+                    setOverlayVisibility(a11yShow)
+                } else if (!a11yShow) {
                     setOverlayVisibility(false)
                 }
                 mainHandler.postDelayed(this, ACCESSIBILITY_HEARTBEAT_MS)
@@ -1137,6 +1170,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         var isSwipingUp = false
         var isSwipingRightFeed = false
         var usingNativeOverlayOnPill = false
+        var lastPillFeedProgress = 0f
         var longPressTriggered = false
         var pillVelocityTracker: VelocityTracker? = null
 
@@ -1241,8 +1275,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         updateCalibrationLabel(snapshot.profile, updated)
                     } else if (isSwipingRightFeed) {
                         val revealPx = ((event.rawX - downRawX) * 1.65f).coerceIn(0f, snapshot.widthPx.toFloat())
+                        val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        lastPillFeedProgress = progress
                         if (usingNativeOverlayOnPill) {
-                            val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
                             NativeGoogleFeedBridge.updateInteractiveDrag(progress)
                         } else {
                             feedController.updateInteractiveDrag(revealPx, snapshot.widthPx)
@@ -1306,13 +1341,18 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     pillVelocityTracker?.recycle()
                     pillVelocityTracker = null
                     if (isSwipingRightFeed) {
+                        // Safety net: if system cancelled touch mid-drag after real rightward movement,
+                        // commit open instead of aborting the Feed and causing a flicker!
                         if (usingNativeOverlayOnPill) {
-                            NativeGoogleFeedBridge.endInteractiveDrag(0f)
+                            NativeGoogleFeedBridge.endInteractiveDrag(
+                                if (lastPillFeedProgress >= 0.12f) 1f else 0f
+                            )
                         } else {
                             feedController.endInteractiveDrag(0f, snapshot.widthPx)
                         }
                         isSwipingRightFeed = false
                         usingNativeOverlayOnPill = false
+                        lastPillFeedProgress = 0f
                     }
                     if (isSwipingUp) {
                         overlayRoot?.animate()?.translationY(0f)?.alpha(1f)?.setDuration(160L)?.start()
@@ -1351,26 +1391,33 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         lensButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                // Tier 1 (<5ms): Direct Google App Lens deep link / exported activity on main thread
-                if (GoogleIntentLauncher.launchGoogleLens(this)) {
-                    return@setOnClickListener
-                }
-                // Tier 2: Fast Shizuku direct am start (no uiautomator delay), then Tier 3 Accessibility auto-tap
-                bgExecutor.execute {
-                    val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
-                    if (!launchedViaShizuku) {
-                        mainHandler.post {
-                            if (AccessibilityForegroundState.isConnected) {
-                                LauncherGestureBus.requestAutoClickGoogleLens()
-                                GoogleIntentLauncher.launchGoogleApp(this)
-                            } else {
-                                Toast.makeText(
-                                    this,
-                                    "無法啟動 Google 智慧鏡頭，請確認已安裝 Google App 並開啟 Shizuku 或無障礙服務",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                // On Android 15-17, Google App's LensActivity has allowCrossUidActivitySwitchFromBelow=false,
+                // so calling startActivity() directly from a background Service can be blocked by BAL.
+                // Tier 1 (<25ms, zero BAL block): Shizuku direct `am start -d google://lens` when available!
+                if (shizukuManager.taskService != null) {
+                    bgExecutor.execute {
+                        val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
+                        if (!launchedViaShizuku) {
+                            mainHandler.post {
+                                if (!GoogleIntentLauncher.launchGoogleLens(this)) {
+                                    if (AccessibilityForegroundState.isConnected) {
+                                        LauncherGestureBus.requestAutoClickGoogleLens()
+                                        GoogleIntentLauncher.launchGoogleApp(this)
+                                    }
+                                }
                             }
                         }
+                    }
+                } else if (!GoogleIntentLauncher.launchGoogleLens(this)) {
+                    if (AccessibilityForegroundState.isConnected) {
+                        LauncherGestureBus.requestAutoClickGoogleLens()
+                        GoogleIntentLauncher.launchGoogleApp(this)
+                    } else {
+                        Toast.makeText(
+                            this,
+                            "無法啟動 Google 智慧鏡頭，請確認已安裝 Google App 並開啟 Shizuku 或無障礙服務",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }

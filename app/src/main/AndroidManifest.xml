@@ -15,6 +15,7 @@
 
     <queries>
         <package android:name="com.google.android.googlequicksearchbox" />
+        <package android:name="com.google.android.tts" />
         <package android:name="com.google.ar.lens" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -22,6 +23,15 @@
         </intent>
         <intent>
             <action android:name="com.android.launcher3.WINDOW_OVERLAY" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data
+                android:host="lens"
+                android:scheme="google" />
         </intent>
     </queries>
 

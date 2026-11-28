@@ -23,9 +23,15 @@ class GoogleFeedOverlayActivity : AppCompatActivity() {
         overridePendingTransition(0, 0)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        @Suppress("DEPRECATION")
         window.statusBarColor = Color.TRANSPARENT
+        @Suppress("DEPRECATION")
         window.navigationBarColor = Color.TRANSPARENT
-        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        )
 
         val transparentRoot = View(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
@@ -41,6 +47,20 @@ class GoogleFeedOverlayActivity : AppCompatActivity() {
                 NativeGoogleFeedBridge.onHostBackPressed()
             }
         })
+    }
+
+    fun setInteractiveMode(interactive: Boolean) {
+        if (interactive) {
+            window.clearFlags(
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            )
+        } else {
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            )
+        }
     }
 
     override fun onAttachedToWindow() {

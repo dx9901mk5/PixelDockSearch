@@ -19,7 +19,15 @@ class VoiceSearchBridgeActivity : Activity() {
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
 
-        val googleVoiceIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        // On Android 14-17, Google's Speech-to-Text lives in com.google.android.tts (GoogleTTSActivity),
+        // not com.google.android.googlequicksearchbox! Try TTS first, then Google App, then system default.
+        val googleTtsVoiceIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            setPackage("com.google.android.tts")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "請說出要搜尋的內容…")
+        }
+
+        val googleAppVoiceIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             setPackage(GoogleIntentLauncher.GOOGLE_APP_PACKAGE)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
             putExtra(RecognizerIntent.EXTRA_PROMPT, "請說出要搜尋的內容…")
@@ -30,14 +38,10 @@ class VoiceSearchBridgeActivity : Activity() {
             putExtra(RecognizerIntent.EXTRA_PROMPT, "請說出要搜尋的內容…")
         }
 
-        val launched = runCatching {
-            @Suppress("DEPRECATION")
-            startActivityForResult(googleVoiceIntent, REQ_VOICE_SEARCH)
-            true
-        }.getOrElse {
+        val launched = listOf(googleTtsVoiceIntent, googleAppVoiceIntent, fallbackVoiceIntent).any { intent ->
             runCatching {
                 @Suppress("DEPRECATION")
-                startActivityForResult(fallbackVoiceIntent, REQ_VOICE_SEARCH)
+                startActivityForResult(intent, REQ_VOICE_SEARCH)
                 true
             }.getOrDefault(false)
         }

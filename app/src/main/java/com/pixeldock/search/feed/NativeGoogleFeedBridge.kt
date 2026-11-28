@@ -352,11 +352,15 @@ object NativeGoogleFeedBridge {
         // Flush any drag progress buffered during the ~40ms Activity attach window
         if (pendingAutoOpen) {
             pendingAutoOpen = false
+            activity.setInteractiveMode(true)
             try {
                 svc.openOverlay(1)
             } catch (_: Throwable) {
             }
         } else if (isDragSessionActive) {
+            // Keep host non-focusable/non-touchable while user is dragging on the Search Bar
+            // so Android NEVER sends ACTION_CANCEL to the search bar mid-drag!
+            activity.setInteractiveMode(false)
             startScrollIfNeeded()
             if (latestDragProgress > 0f) {
                 try {
@@ -389,6 +393,7 @@ object NativeGoogleFeedBridge {
         }
         try {
             if (shouldOpen) {
+                activeHostActivity?.get()?.setInteractiveMode(true)
                 if (isScrollStartedOnOverlay) {
                     svc.onScroll(progress.coerceAtLeast(0.55f))
                     svc.endScroll()

@@ -301,19 +301,35 @@ class SearchAccessibilityService : AccessibilityService() {
         var pageIndicatorText = ""
         val topTokens = ArrayList<String>(4)
 
-        // Check active windows for floating launcher popup menus (long-press shortcut menu)
+        // Check active windows for:
+        // 1. Overlay-style OEM Minus-One sub-windows (e.g., com.vivo.hiboard HiBoard type=2)
+        // 2. Floating launcher popup menus (long-press shortcut menu)
         try {
             val displayMetrics = resources.displayMetrics
-            val screenArea = displayMetrics.widthPixels.toLong() * displayMetrics.heightPixels.toLong()
+            val screenW = displayMetrics.widthPixels
+            val screenArea = screenW.toLong() * displayMetrics.heightPixels.toLong()
             val rect = Rect()
             for (win in windows) {
                 val root = win.root ?: continue
                 val winPkg = root.packageName?.toString() ?: ""
+                val title = win.title?.toString() ?: ""
+                if (winPkg == "com.vivo.hiboard" ||
+                    title.contains("HiBoard", ignoreCase = true) ||
+                    LauncherGestureBus.isMinusOnePackageOrClass(
+                        winPkg, title, prefs.customMinusOnePackage, prefs.customMinusOneSignature, "", cachedLaunchers
+                    )
+                ) {
+                    win.getBoundsInScreen(rect)
+                    // Only count as active Minus-One when its window is visibly on-screen (> 25% of screen width)
+                    if (rect.width() > screenW / 4 && rect.right > screenW / 4 && rect.left < (screenW * 3) / 4) {
+                        minusOneDetected = true
+                        break
+                    }
+                }
                 if (winPkg == pkg) {
                     win.getBoundsInScreen(rect)
                     val winArea = rect.width().toLong() * rect.height().toLong()
                     if (winArea in 1L until (screenArea * 65L / 100L)) {
-                        val title = win.title?.toString() ?: ""
                         if (LauncherGestureBus.isLauncherPopupClassOrId(title) ||
                             hasAnyVisibleTextNode(root, POPUP_QUERIES)
                         ) {
