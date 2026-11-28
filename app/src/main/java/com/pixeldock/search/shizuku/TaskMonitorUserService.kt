@@ -215,14 +215,11 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
     }
 
     override fun launchGoogleAppLens(): Boolean {
-        // Fast direct Lens activity / deep-link launch (zero sleep / zero uiautomator hang).
+        // Fast direct Lens activity / deep-link launch (verified real URI: google://lens -> com.google.android.apps.lens.MainActivity)
         val directCommands = listOf(
-            "am start -a android.intent.action.VIEW -d 'googleapp://lens' com.google.android.googlequicksearchbox",
-            "am start -a com.google.android.googlequicksearchbox.LENS com.google.android.googlequicksearchbox",
-            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensExportedActivity",
-            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity",
-            "am start -a android.intent.action.VIEW -d 'googlelens://' com.google.android.googlequicksearchbox",
-            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity"
+            "am start -a android.intent.action.VIEW -d 'google://lens' com.google.android.googlequicksearchbox",
+            "am start -a android.intent.action.VIEW -d 'google://lens' -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity",
+            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity"
         )
         for (cmd in directCommands) {
             val out = runShell(cmd)

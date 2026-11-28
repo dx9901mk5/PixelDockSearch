@@ -90,6 +90,7 @@ object GoogleIntentLauncher {
         val bridgeIntent = Intent(context, VoiceSearchBridgeActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
                     Intent.FLAG_ACTIVITY_NO_ANIMATION or
                     Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
             )
@@ -107,23 +108,17 @@ object GoogleIntentLauncher {
 
     fun launchGoogleLens(context: Context): Boolean {
         val candidates = listOf(
-            // Official Pixel Launcher / Google App built-in Lens deep links
-            Intent(Intent.ACTION_VIEW, Uri.parse("googleapp://lens")).apply {
+            // Real exported Google App Lens activity (verified via dumpsys package: Scheme="google", Authority="lens" -> com.google.android.apps.lens.MainActivity)
+            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")).apply {
                 setPackage(GOOGLE_APP_PACKAGE)
             },
-            Intent("com.google.android.googlequicksearchbox.LENS").apply {
-                setPackage(GOOGLE_APP_PACKAGE)
-            },
-            Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://")).apply {
-                setPackage(GOOGLE_APP_PACKAGE)
-            },
-            Intent(Intent.ACTION_MAIN).apply {
+            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")).apply {
                 component = ComponentName(
                     GOOGLE_APP_PACKAGE,
-                    "com.google.android.apps.search.lens.LensExportedActivity"
+                    "com.google.android.apps.lens.MainActivity"
                 )
             },
-            Intent(Intent.ACTION_VIEW, Uri.parse("googlelens://")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")),
             context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE),
             Intent(Intent.ACTION_MAIN).apply {
                 component = ComponentName(

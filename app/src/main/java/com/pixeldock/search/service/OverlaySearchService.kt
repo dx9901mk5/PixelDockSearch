@@ -175,11 +175,22 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 if (!prefs.leftEdgeFeedEnabled || prefs.feedTriggerMode != FeedTriggerMode.FIRST_HOME_PAGE) {
                     return@post
                 }
-                // Only trigger passive first-page swipe when on confirmed First Home Page and no app was clicked
-                if (AccessibilityForegroundState.isConnected && !AccessibilityForegroundState.isOnConfirmedFirstPage) {
+                // Strict guard: only fire passive right-swipe when Accessibility confirms we are on
+                // a uniquely marked First Home Page (not Page 2/3, not HiBoard, and NEVER inside another app!)
+                if (!AccessibilityForegroundState.isConnected ||
+                    AccessibilityForegroundState.isMinusOneActive ||
+                    AccessibilityForegroundState.isAppDrawerOpen ||
+                    AccessibilityForegroundState.isSystemOverlay ||
+                    AccessibilityForegroundState.foregroundPackage !in detector.getLauncherPackages()
+                ) {
                     return@post
                 }
-                if (startXPermille !in 25..780) return@post
+                val firstSig = prefs.customFirstPageSignature
+                if (firstSig.isBlank() || firstSig.endsWith("|") || !AccessibilityForegroundState.isOnConfirmedFirstPage) {
+                    return@post
+                }
+                // Stay away from the extreme left system back-gesture zone (0..120 permille)
+                if (startXPermille !in 120..720) return@post
 
                 val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
                 val revealPx = (dragRightPx * 1.45f).coerceIn(0f, snapshot.widthPx.toFloat())
