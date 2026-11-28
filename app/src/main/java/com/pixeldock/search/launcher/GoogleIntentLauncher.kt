@@ -31,6 +31,37 @@ object GoogleIntentLauncher {
     }
 
     /**
+     * Launches the native Google App with ZERO transition animation so our sliding Feed card
+     * can cross-fade seamlessly right into the real live Google App underneath.
+     */
+    fun launchGoogleAppNoAnim(context: Context): Boolean {
+        val candidates = listOf(
+            context.packageManager.getLaunchIntentForPackage(GOOGLE_APP_PACKAGE),
+            Intent(Intent.ACTION_MAIN).apply {
+                component = ComponentName(
+                    GOOGLE_APP_PACKAGE,
+                    "com.google.android.googlequicksearchbox.SearchActivity"
+                )
+            }
+        )
+        val noAnimBundle = android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
+        for (intent in candidates) {
+            if (intent == null) continue
+            try {
+                intent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION
+                )
+                context.startActivity(intent, noAnimBundle)
+                return true
+            } catch (_: Throwable) {
+            }
+        }
+        return false
+    }
+
+    /**
      * Middle of the search bar: opens Google text search directly.
      */
     fun launchGoogleSearch(context: Context) {

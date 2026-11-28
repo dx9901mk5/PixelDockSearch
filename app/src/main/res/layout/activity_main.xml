@@ -115,6 +115,12 @@
                     android:layout_height="wrap_content"
                     android:text="在搜尋列上向右滑出 Google Feed（過半展開）" />
 
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchFeedNativeApp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="滑出過半後直接無縫切換至原生 Google App" />
+
                 <TextView
                     android:id="@+id/tvFeedTriggerSummary"
                     android:layout_width="match_parent"

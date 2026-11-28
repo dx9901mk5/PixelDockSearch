@@ -227,6 +227,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        binding.switchFeedNativeApp.setOnCheckedChangeListener { _, isChecked ->
+            if (!suppressListeners) {
+                prefs.feedLaunchNativeGoogleApp = isChecked
+                notifyOverlayRefresh()
+            }
+        }
+
         binding.rgFeedBehavior.setOnCheckedChangeListener { _, checkedId ->
             if (suppressListeners) return@setOnCheckedChangeListener
             prefs.feedTriggerMode = when (checkedId) {
@@ -408,6 +415,7 @@ class MainActivity : AppCompatActivity() {
         binding.switchAutoBoot.isChecked = prefs.autoStartOnBoot
         binding.switchLeftEdgeFeed.isChecked = prefs.leftEdgeFeedEnabled
         binding.switchBarSwipeFeed.isChecked = prefs.searchBarSwipeFeedEnabled
+        binding.switchFeedNativeApp.isChecked = prefs.feedLaunchNativeGoogleApp
         when (prefs.feedTriggerMode) {
             FeedTriggerMode.FIRST_HOME_PAGE -> binding.rgFeedBehavior.check(R.id.rbFeedFirstPage)
             FeedTriggerMode.MINUS_ONE_AUTO_REPLACE -> binding.rgFeedBehavior.check(R.id.rbFeedMinusOneReplace)

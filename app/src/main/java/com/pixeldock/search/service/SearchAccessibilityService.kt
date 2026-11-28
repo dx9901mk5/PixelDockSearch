@@ -99,10 +99,11 @@ class SearchAccessibilityService : AccessibilityService() {
                         isAppDrawer = false,
                         isPopupOrMenu = false
                     )
-                    if (pkg == "com.google.android.googlequicksearchbox" &&
-                        LauncherGestureBus.isAutoClickGoogleLensPending()
-                    ) {
-                        tryClickGoogleAppLensButton()
+                    if (pkg == "com.google.android.googlequicksearchbox") {
+                        LauncherGestureBus.dispatchGoogleAppEntered()
+                        if (LauncherGestureBus.isAutoClickGoogleLensPending()) {
+                            scheduleLensAutoClickRetries()
+                        }
                     }
                     return
                 }
@@ -142,6 +143,19 @@ class SearchAccessibilityService : AccessibilityService() {
         }
     }
 
+    private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun scheduleLensAutoClickRetries() {
+        tryClickGoogleAppLensButton()
+        for (delayMs in longArrayOf(200L, 520L, 950L, 1450L)) {
+            retryHandler.postDelayed({
+                if (LauncherGestureBus.isAutoClickGoogleLensPending()) {
+                    tryClickGoogleAppLensButton()
+                }
+            }, delayMs)
+        }
+    }
+
     private fun tryClickGoogleAppLensButton() {
         val root = try {
             rootInActiveWindow
@@ -153,15 +167,20 @@ class SearchAccessibilityService : AccessibilityService() {
             val queue = ArrayDeque<AccessibilityNodeInfo>()
             queue.add(root)
             var visited = 0
-            while (queue.isNotEmpty() && visited < 80) {
+            while (queue.isNotEmpty() && visited < 100) {
                 val node = queue.removeFirst()
                 visited++
                 val desc = node.contentDescription?.toString()?.trim().orEmpty()
                 val text = node.text?.toString()?.trim().orEmpty()
                 val viewId = node.viewIdResourceName?.trim().orEmpty()
                 val isLensTarget = desc.contains("智慧鏡頭", ignoreCase = true) ||
+                    desc.contains("圖片搜尋", ignoreCase = true) ||
+                    desc.contains("相機搜尋", ignoreCase = true) ||
+                    desc.contains("以圖搜尋", ignoreCase = true) ||
                     desc.contains("Google 鏡頭", ignoreCase = true) ||
                     desc.contains("智慧镜头", ignoreCase = true) ||
+                    desc.contains("拍照搜", ignoreCase = true) ||
+                    desc.contains("search with your camera", ignoreCase = true) ||
                     desc.contains("Lens", ignoreCase = true) ||
                     text.equals("智慧鏡頭", ignoreCase = true) ||
                     text.equals("Lens", ignoreCase = true) ||
@@ -187,7 +206,7 @@ class SearchAccessibilityService : AccessibilityService() {
 
     private fun inspectLauncherHierarchy(pkg: String, cls: String, force: Boolean) {
         val now = System.currentTimeMillis()
-        if (!force && now - lastContentScanMs < 75L) return
+        if (!force && now - lastContentScanMs < 25L) return
         lastContentScanMs = now
 
         var popupDetected = LauncherGestureBus.isLauncherPopupClassOrId(cls)

@@ -93,6 +93,10 @@ class PrefsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_BAR_SWIPE_FEED, true)
         set(value) = prefs.edit().putBoolean(KEY_BAR_SWIPE_FEED, value).apply()
 
+    var feedLaunchNativeGoogleApp: Boolean
+        get() = prefs.getBoolean(KEY_FEED_NATIVE_GOOGLE_APP, true)
+        set(value) = prefs.edit().putBoolean(KEY_FEED_NATIVE_GOOGLE_APP, value).apply()
+
     var customMinusOnePackage: String
         get() = prefs.getString(KEY_CUSTOM_MINUS_ONE_PKG, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CUSTOM_MINUS_ONE_PKG, value).apply()
@@ -163,6 +167,7 @@ class PrefsRepository(context: Context) {
         private const val KEY_LEFT_EDGE_HEIGHT_PCT = "left_edge_height_pct"
         private const val KEY_FEED_TRIGGER_MODE = "feed_trigger_mode"
         private const val KEY_BAR_SWIPE_FEED = "search_bar_swipe_feed"
+        private const val KEY_FEED_NATIVE_GOOGLE_APP = "feed_native_google_app"
         private const val KEY_CUSTOM_MINUS_ONE_PKG = "custom_minus_one_pkg"
         private const val KEY_CUSTOM_MINUS_ONE_SIG = "custom_minus_one_sig"
         private const val KEY_CUSTOM_FIRST_PAGE_SIG = "custom_first_page_sig"

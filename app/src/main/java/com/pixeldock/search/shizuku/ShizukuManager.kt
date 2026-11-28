@@ -171,6 +171,29 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    fun prewarmGoogleApp(): Boolean {
+        return try {
+            taskService?.prewarmGoogleApp() == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun captureScreenToPath(outputPath: String): Boolean {
+        return try {
+            taskService?.captureScreenToPath(outputPath) == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun setTouchCallback(callback: ITouchEventCallback?) {
+        try {
+            taskService?.setTouchCallback(callback)
+        } catch (_: Throwable) {
+        }
+    }
+
     companion object {
         private const val REQUEST_CODE_SHIZUKU = 1001
     }

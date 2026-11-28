@@ -16,6 +16,7 @@ object LauncherGestureBus {
             isPopupOrMenu: Boolean
         )
         fun onCurrentPageSnapshotChanged(pkg: String, cls: String, pageSignature: String)
+        fun onGoogleAppEntered()
     }
 
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
@@ -172,6 +173,15 @@ object LauncherGestureBus {
         mainHandler.post {
             for (listener in listeners) {
                 listener.onCurrentPageSnapshotChanged(pkg, cls, pageSignature)
+            }
+        }
+    }
+
+    fun dispatchGoogleAppEntered() {
+        if (listeners.isEmpty()) return
+        mainHandler.post {
+            for (listener in listeners) {
+                listener.onGoogleAppEntered()
             }
         }
     }

@@ -50,6 +50,7 @@ import com.pixeldock.search.detector.LauncherDetector
 import com.pixeldock.search.detector.LauncherGestureBus
 import com.pixeldock.search.launcher.GoogleIntentLauncher
 import com.pixeldock.search.model.DisplayProfile
+import com.pixeldock.search.shizuku.ITouchEventCallback
 import com.pixeldock.search.shizuku.ShizukuManager
 import com.pixeldock.search.ui.MainActivity
 import java.util.concurrent.Executors
@@ -105,7 +106,75 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     private var isHiddenByDrawer = false
     private var isHiddenByPopup = false
     private var drawerScrollOffsetPx = 0f
+    private var isTouchDraggingDrawerUp = false
+    private var lastSnapshotCaptureMs = 0L
     private var currentSnapshot: DisplayProfile.DisplayMetricsSnapshot? = null
+
+    private val touchEventCallback = object : ITouchEventCallback.Stub() {
+        override fun onUpwardDrag(dragUpPx: Int) {
+            mainHandler.post {
+                if (isCalibrationMode || !isOverlayAttached || !isOverlayVisible ||
+                    isHiddenByPopup || isHiddenByDrawer || feedController.isOverlayShowing() ||
+                    pagePickerView != null
+                ) {
+                    return@post
+                }
+                val root = overlayRoot ?: return@post
+                val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
+                val fadeDist = (180f * snapshot.density).coerceAtLeast(220f)
+                isTouchDraggingDrawerUp = true
+                root.animate().cancel()
+                root.translationY = -dragUpPx.toFloat()
+                root.alpha = (1f - dragUpPx / fadeDist).coerceIn(0f, 1f)
+            }
+        }
+
+        override fun onUpwardDragEnd(dragUpPx: Int, velocityPxPerSec: Int) {
+            mainHandler.post {
+                if (!isTouchDraggingDrawerUp) return@post
+                isTouchDraggingDrawerUp = false
+                if (isCalibrationMode || !isOverlayAttached) return@post
+                val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
+                if (dragUpPx >= (72f * snapshot.density) || velocityPxPerSec >= 850) {
+                    val dur = (180L * (1000f / velocityPxPerSec.coerceIn(700, 2600))).toLong().coerceIn(85L, 190L)
+                    isHiddenByDrawer = true
+                    animateSlideOutUpward(durationMs = dur)
+                    // Safety restore if user swiped up slightly without actually opening drawer
+                    mainHandler.postDelayed({
+                        if (isHiddenByDrawer && !AccessibilityForegroundState.isAppDrawerOpen) {
+                            isHiddenByDrawer = false
+                        }
+                    }, 900L)
+                } else {
+                    overlayRoot?.animate()
+                        ?.translationY(0f)
+                        ?.alpha(1f)
+                        ?.setDuration(160L)
+                        ?.setInterpolator(drawerInterpolator)
+                        ?.start()
+                }
+            }
+        }
+    }
+
+    private val captureGoogleSnapshotRunnable = Runnable {
+        val now = System.currentTimeMillis()
+        if (!isRunning || !isScreenInteractive || now - lastSnapshotCaptureMs < 15_000L) return@Runnable
+        bgExecutor.execute {
+            val fg = if (AccessibilityForegroundState.isConnected) {
+                AccessibilityForegroundState.foregroundPackage
+            } else {
+                shizukuManager.getForegroundPackage().orEmpty()
+            }
+            if (fg == GoogleIntentLauncher.GOOGLE_APP_PACKAGE) {
+                val ok = shizukuManager.captureScreenToPath(feedController.getSnapshotFilePath())
+                if (ok) {
+                    lastSnapshotCaptureMs = System.currentTimeMillis()
+                    feedController.reloadSnapshotFromDisk()
+                }
+            }
+        }
+    }
 
     private val pollInFlight = AtomicBoolean(false)
 
@@ -159,7 +228,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     } catch (_: Throwable) {
                         false
                     }
-                    val shizukuPkg = if (pagePickerView != null) {
+                    val shizukuPkg = if (pagePickerView != null || !AccessibilityForegroundState.isConnected) {
                         shizukuManager.getForegroundPackage().orEmpty()
                     } else {
                         ""
@@ -176,6 +245,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     pollInFlight.set(false)
 
                     mainHandler.post {
+                        if (shizukuPkg == GoogleIntentLauncher.GOOGLE_APP_PACKAGE) {
+                            onGoogleAppEntered()
+                        }
                         if (pagePickerView != null && shizukuPkg.isNotBlank() && !AccessibilityForegroundState.isConnected) {
                             latestObservedPkg = shizukuPkg
                             latestObservedSignature = "$shizukuPkg|"
@@ -242,12 +314,19 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         isScreenInteractive = powerManager.isInteractive
-        feedController = GoogleFeedOverlayController(this, windowManager)
+        feedController = GoogleFeedOverlayController(this, windowManager, prefs)
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        shizukuManager.start()
+        shizukuManager.start {
+            if (shizukuManager.taskService != null) {
+                bgExecutor.execute {
+                    shizukuManager.prewarmGoogleApp()
+                    shizukuManager.setTouchCallback(touchEventCallback)
+                }
+            }
+        }
         displayManager.registerDisplayListener(displayListener, mainHandler)
         LauncherGestureBus.register(this)
 
@@ -325,6 +404,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
             displayManager.unregisterDisplayListener(displayListener)
         } catch (_: Throwable) {
         }
+        shizukuManager.setTouchCallback(null)
         shizukuManager.stop()
         feedController.destroy()
         detachOverlay()
@@ -341,17 +421,30 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         isPopupOrMenu: Boolean
     ) {
         if (isCalibrationMode || !isOverlayAttached) return
+        val wasDrawer = isHiddenByDrawer
         isHiddenByDrawer = isAppDrawer
         isHiddenByPopup = isPopupOrMenu
         if (!shouldShowHomeOverlay) {
-            // Instant 0ms hide on app launch, popup menu (Fig 1), or app drawer (Fig 3)
             mainHandler.removeCallbacks(drawerSettleRunnable)
             drawerScrollOffsetPx = 0f
-            setOverlayVisibility(false)
+            if (isAppDrawer && isOverlayVisible) {
+                // Smoothly slide UPWARD and fade away with the App Drawer instead of abrupt pop-out!
+                animateSlideOutUpward(durationMs = 190L)
+            } else if (!isAppDrawer) {
+                // Instant 0ms hide on app launch or long-press popup menu (Fig 1)
+                setOverlayVisibility(false)
+            }
         } else {
             drawerScrollOffsetPx = 0f
-            setOverlayVisibility(true)
+            setOverlayVisibility(true, slideDownRestore = wasDrawer)
         }
+    }
+
+    override fun onGoogleAppEntered() {
+        feedController.onNativeGoogleAppReady()
+        // Silently refresh our cached Google App screenshot once settled so next Feed swipe looks pixel-identical!
+        mainHandler.removeCallbacks(captureGoogleSnapshotRunnable)
+        mainHandler.postDelayed(captureGoogleSnapshotRunnable, 1400L)
     }
 
     override fun onCurrentPageSnapshotChanged(pkg: String, cls: String, pageSignature: String) {
@@ -997,24 +1090,21 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         lensButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                // Tier 1: Shizuku direct internal LensActivity launch (bypasses non-exported & allowlist restrictions)
+                // Tier 1: Shizuku direct Lens launch (verified Lens focus) + uiautomator tap fallback inside Google App
                 bgExecutor.execute {
                     val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
                     if (!launchedViaShizuku) {
                         mainHandler.post {
-                            // Tier 2: Verified public Lens deep link / Lens package / exported Lens activity
-                            if (!GoogleIntentLauncher.launchGoogleLens(this)) {
-                                // Tier 3: Accessibility auto-tap Google App's built-in Lens icon
-                                if (AccessibilityForegroundState.isConnected) {
-                                    LauncherGestureBus.requestAutoClickGoogleLens()
-                                    GoogleIntentLauncher.launchGoogleApp(this)
-                                } else {
-                                    Toast.makeText(
-                                        this,
-                                        "無法直接啟動 Google 智慧鏡頭，請開啟 Shizuku 或無障礙服務",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
+                            // Tier 2: Accessibility auto-tap Google App's built-in Lens icon (works without Shizuku)
+                            if (AccessibilityForegroundState.isConnected) {
+                                LauncherGestureBus.requestAutoClickGoogleLens()
+                                GoogleIntentLauncher.launchGoogleApp(this)
+                            } else if (!GoogleIntentLauncher.launchGoogleLens(this)) {
+                                Toast.makeText(
+                                    this,
+                                    "無法啟動 Google 智慧鏡頭，請確認 Shizuku 或無障礙服務已開啟",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         }
                     }
@@ -1242,7 +1332,11 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         edge.visibility = if (allowOnThisPage) View.VISIBLE else View.GONE
     }
 
-    private fun setOverlayVisibility(visible: Boolean, isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
+    private fun setOverlayVisibility(
+        visible: Boolean,
+        isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive,
+        slideDownRestore: Boolean = false
+    ) {
         val view = overlayRoot ?: return
         if (!isOverlayAttached) return
         // Bottom search bar must NEVER show on Minus-One screen
@@ -1252,9 +1346,22 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         isOverlayVisible = showSearchBar
         if (showSearchBar) {
             view.animate().cancel()
-            view.translationY = 0f
-            view.alpha = 1f
-            view.visibility = View.VISIBLE
+            if (slideDownRestore) {
+                val density = (currentSnapshot ?: DisplayProfile.fromContext(this)).density
+                view.translationY = -64f * density
+                view.alpha = 0f
+                view.visibility = View.VISIBLE
+                view.animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(180L)
+                    .setInterpolator(drawerInterpolator)
+                    .start()
+            } else {
+                view.translationY = 0f
+                view.alpha = 1f
+                view.visibility = View.VISIBLE
+            }
         } else {
             view.animate().cancel()
             view.visibility = View.GONE
