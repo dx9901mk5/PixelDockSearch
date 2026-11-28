@@ -665,7 +665,9 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         val statusBarH = getStatusBarHeightPx()
         val params = WindowManager.LayoutParams(
-            (snapshot.widthPx * 0.94f).roundToInt().coerceAtMost((460 * density).roundToInt()),
+            (snapshot.widthPx - (32 * density)).roundToInt()
+                .coerceAtMost((420 * density).roundToInt())
+                .coerceAtLeast((260 * density).roundToInt()),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -1205,13 +1207,27 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         if (!isOverlayAttached) return
 
         val density = snapshot.density
-        val pillWidthPx = ((snapshot.widthPx * (config.widthPercent / 100f))).roundToInt()
+        val maxPillWidthInCalibration = (snapshot.widthPx - (46 * density)).roundToInt()
             .coerceAtLeast((160 * density).roundToInt())
+        val rawPillWidthPx = ((snapshot.widthPx * (config.widthPercent / 100f))).roundToInt()
+            .coerceAtLeast((160 * density).roundToInt())
+        val pillWidthPx = if (isCalibrationMode) {
+            min(rawPillWidthPx, maxPillWidthInCalibration)
+        } else {
+            rawPillWidthPx
+        }
         val pillHeightPx = (config.heightDp * density).roundToInt()
 
         pillContainer?.layoutParams = pillContainer?.layoutParams?.apply {
             width = pillWidthPx
             height = pillHeightPx
+        }
+
+        // Keep calibration HUD cleanly inset from both screen edges even on narrow cover screens
+        calibrationBanner?.layoutParams = calibrationBanner?.layoutParams?.apply {
+            width = (snapshot.widthPx - (36 * density)).roundToInt()
+                .coerceAtMost((340 * density).roundToInt())
+                .coerceAtLeast((240 * density).roundToInt())
         }
 
         params.width = WindowManager.LayoutParams.WRAP_CONTENT
@@ -1302,7 +1318,15 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     }
 
     private fun updateCalibrationLabel(profile: DisplayProfile, config: ProfileLayoutConfig) {
-        calibrationLabel?.text = "${profile.displayNameZh} ${config.widthPercent}%×${config.heightDp}dp"
+        val shortName = when (profile) {
+            DisplayProfile.COMPACT_PORTRAIT -> "手機/外屏(直)"
+            DisplayProfile.COMPACT_LANDSCAPE -> "手機/外屏(橫)"
+            DisplayProfile.EXPANDED_PORTRAIT -> "摺疊展開(直)"
+            DisplayProfile.EXPANDED_LANDSCAPE -> "摺疊展開(橫)"
+            DisplayProfile.TABLET_PORTRAIT -> "平板(直)"
+            DisplayProfile.TABLET_LANDSCAPE -> "平板(橫)"
+        }
+        calibrationLabel?.text = "$shortName · ${config.widthPercent}%×${config.heightDp}dp"
     }
 
     private fun updateLeftEdgeVisibility(homeVisible: Boolean, isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
