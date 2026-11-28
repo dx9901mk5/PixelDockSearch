@@ -165,70 +165,11 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         }
 
         override fun onRightSwipe(dragRightPx: Int, startXPermille: Int) {
-            mainHandler.post {
-                if (isCalibrationMode || !isOverlayAttached || !isOverlayVisible ||
-                    isHiddenByPopup || isHiddenByDrawer || pagePickerView != null ||
-                    isPillTouchActive || isTouchDraggingDrawerUp
-                ) {
-                    return@post
-                }
-                if (!prefs.leftEdgeFeedEnabled || prefs.feedTriggerMode != FeedTriggerMode.FIRST_HOME_PAGE) {
-                    return@post
-                }
-                // Strict guard: only fire passive right-swipe when Accessibility confirms we are on
-                // a uniquely marked First Home Page (not Page 2/3, not HiBoard, and NEVER inside another app!)
-                if (!AccessibilityForegroundState.isConnected ||
-                    AccessibilityForegroundState.isMinusOneActive ||
-                    AccessibilityForegroundState.isAppDrawerOpen ||
-                    AccessibilityForegroundState.isSystemOverlay ||
-                    AccessibilityForegroundState.foregroundPackage !in detector.getLauncherPackages()
-                ) {
-                    return@post
-                }
-                val firstSig = prefs.customFirstPageSignature
-                if (firstSig.isBlank() || firstSig.endsWith("|") || !AccessibilityForegroundState.isOnConfirmedFirstPage) {
-                    return@post
-                }
-                // Stay away from the extreme left system back-gesture zone (0..120 permille)
-                if (startXPermille !in 120..720) return@post
-
-                val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
-                val revealPx = (dragRightPx * 1.45f).coerceIn(0f, snapshot.widthPx.toFloat())
-                val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
-
-                if (!isPassiveFirstPageFeedDragging) {
-                    if (feedController.isOverlayShowing()) return@post
-                    isPassiveFirstPageFeedDragging = true
-                    usingNativeOverlayOnPassiveSwipe = prefs.feedLaunchNativeGoogleApp &&
-                        NativeGoogleFeedBridge.beginInteractiveDrag(this@OverlaySearchService)
-                    if (!usingNativeOverlayOnPassiveSwipe) {
-                        feedController.beginInteractiveDrag(snapshot.widthPx)
-                    }
-                }
-
-                if (usingNativeOverlayOnPassiveSwipe) {
-                    NativeGoogleFeedBridge.updateInteractiveDrag(progress)
-                } else {
-                    feedController.updateInteractiveDrag(revealPx, snapshot.widthPx)
-                }
-            }
+            // Left-edge & passive full-screen Feed swipe intentionally disabled;
+            // Google Feed is exclusively pulled out by swiping right on the bottom Search Bar on the leftmost home page.
         }
 
-        override fun onRightSwipeEnd(dragRightPx: Int, velocityPxPerSec: Int) {
-            mainHandler.post {
-                if (!isPassiveFirstPageFeedDragging) return@post
-                isPassiveFirstPageFeedDragging = false
-                val snapshot = currentSnapshot ?: DisplayProfile.fromContext(this@OverlaySearchService)
-                val revealPx = (dragRightPx * 1.45f).coerceIn(0f, snapshot.widthPx.toFloat())
-                val progress = (revealPx / snapshot.widthPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
-                if (usingNativeOverlayOnPassiveSwipe) {
-                    NativeGoogleFeedBridge.endInteractiveDrag(progress, velocityX = velocityPxPerSec.toFloat())
-                } else {
-                    feedController.endInteractiveDrag(revealPx, snapshot.widthPx)
-                }
-                usingNativeOverlayOnPassiveSwipe = false
-            }
-        }
+        override fun onRightSwipeEnd(dragRightPx: Int, velocityPxPerSec: Int) = Unit
     }
 
     private val captureGoogleSnapshotRunnable = Runnable {
@@ -279,9 +220,8 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 return
             }
 
-            // When Accessibility is connected, it drives instant <16ms events via LauncherGestureBus;
-            // ALSO run a lightweight Shizuku cross-check when Shizuku is connected so overlay-style
-            // OEM Minus-One sub-windows (e.g., Window{com.vivo.hiboard:... u0 HiBoard type=2}) hide in 0ms!
+            // When Accessibility is connected, keep the bar rock-solid across all desktop page swipes
+            // (hiding only for real-page OEM Minus-One, App Drawer, floating/mini-window apps, or non-launcher apps).
             if (AccessibilityForegroundState.isConnected && pagePickerView == null) {
                 val a11yShow = !AccessibilityForegroundState.isSystemOverlay &&
                     !AccessibilityForegroundState.isAppDrawerOpen &&
@@ -289,38 +229,6 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     !AccessibilityForegroundState.isMinusOneActive &&
                     !AccessibilityForegroundState.isFloatingAppOpen &&
                     AccessibilityForegroundState.foregroundPackage in detector.getLauncherPackages()
-
-                if (shizukuManager.taskService != null && pollInFlight.compareAndSet(false, true)) {
-                    bgExecutor.execute {
-                        val shizukuPkg = try {
-                            shizukuManager.getForegroundPackage().orEmpty()
-                        } catch (_: Throwable) {
-                            ""
-                        }
-                        pollInFlight.set(false)
-                        mainHandler.post {
-                            val isShizukuMinusOne = shizukuPkg == "com.vivo.hiboard" ||
-                                LauncherGestureBus.isMinusOnePackageOrClass(
-                                    shizukuPkg, "", prefs.customMinusOnePackage, prefs.customMinusOneSignature, "", detector.getLauncherPackages()
-                                )
-                            val isShizukuNonHome = shizukuPkg.isNotBlank() &&
-                                shizukuPkg != packageName &&
-                                shizukuPkg !in detector.getLauncherPackages()
-                            val finalShow = a11yShow && !isShizukuMinusOne && !isShizukuNonHome
-                            if (isShizukuMinusOne) {
-                                AccessibilityForegroundState.isMinusOneActive = true
-                            }
-                            if (!isHiddenByDrawer && !isHiddenByPopup) {
-                                setOverlayVisibility(finalShow, isMinusOne = isShizukuMinusOne || AccessibilityForegroundState.isMinusOneActive)
-                            } else if (!finalShow) {
-                                setOverlayVisibility(false, isMinusOne = isShizukuMinusOne || AccessibilityForegroundState.isMinusOneActive)
-                            }
-                        }
-                    }
-                    mainHandler.postDelayed(this, 180L)
-                    return
-                }
-
                 if (!isHiddenByDrawer && !isHiddenByPopup) {
                     setOverlayVisibility(a11yShow)
                 } else if (!a11yShow) {
@@ -1248,8 +1156,12 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                         mainHandler.removeCallbacks(longPressRunnable)
                         if (isCalibrationMode) {
                             isDragging = true
-                        } else if (prefs.searchBarSwipeFeedEnabled && dx > touchSlop && dx > abs(dy) * 1.15f) {
-                            // Fig 2: Right-swipe directly on the Google Search Bar pulls out Google Feed 1:1
+                        } else if (prefs.searchBarSwipeFeedEnabled &&
+                            isOnLeftmostHomePageForBarFeed() &&
+                            dx > touchSlop &&
+                            dx > abs(dy) * 1.15f
+                        ) {
+                            // Only on the leftmost home page: right-swipe on the bottom Google Search Bar pulls out Google Feed 1:1
                             isSwipingRightFeed = true
                             v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                             usingNativeOverlayOnPill = prefs.feedLaunchNativeGoogleApp &&
@@ -1386,40 +1298,37 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
         micButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                GoogleIntentLauncher.launchVoiceSearch(this)
+                // Directly invoke Gemini voice listening overlay (prefer Shizuku shell to bypass Android 15-17 BAL)
+                if (shizukuManager.taskService != null) {
+                    bgExecutor.execute {
+                        val launched = shizukuManager.launchGeminiVoice()
+                        if (!launched) {
+                            mainHandler.post { GoogleIntentLauncher.launchGeminiVoice(this) }
+                        }
+                    }
+                } else {
+                    GoogleIntentLauncher.launchGeminiVoice(this)
+                }
             }
         }
 
         lensButton?.setOnClickListener {
             if (!isCalibrationMode) {
-                // On Android 15-17, Google App's LensActivity has allowCrossUidActivitySwitchFromBelow=false,
-                // so calling startActivity() directly from a background Service can be blocked by BAL.
-                // Tier 1 (<25ms, zero BAL block): Shizuku direct `am start -d google://lens` when available!
-                if (shizukuManager.taskService != null) {
-                    bgExecutor.execute {
-                        val launchedViaShizuku = shizukuManager.launchGoogleAppLens()
-                        if (!launchedViaShizuku) {
-                            mainHandler.post {
-                                if (!GoogleIntentLauncher.launchGoogleLens(this)) {
-                                    if (AccessibilityForegroundState.isConnected) {
-                                        LauncherGestureBus.requestAutoClickGoogleLens()
-                                        GoogleIntentLauncher.launchGoogleApp(this)
-                                    }
-                                }
+                // Launch standalone Play Store Google Lens app (com.google.ar.lens);
+                // if not installed, guide user directly to Google Play Store to install it.
+                if (GoogleIntentLauncher.isStandaloneLensInstalled(this)) {
+                    if (shizukuManager.taskService != null) {
+                        bgExecutor.execute {
+                            val launched = shizukuManager.launchGoogleAppLens()
+                            if (!launched) {
+                                mainHandler.post { GoogleIntentLauncher.launchStandaloneLens(this) }
                             }
                         }
-                    }
-                } else if (!GoogleIntentLauncher.launchGoogleLens(this)) {
-                    if (AccessibilityForegroundState.isConnected) {
-                        LauncherGestureBus.requestAutoClickGoogleLens()
-                        GoogleIntentLauncher.launchGoogleApp(this)
                     } else {
-                        Toast.makeText(
-                            this,
-                            "無法啟動 Google 智慧鏡頭，請確認已安裝 Google App 並開啟 Shizuku 或無障礙服務",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        GoogleIntentLauncher.launchStandaloneLens(this)
                     }
+                } else {
+                    GoogleIntentLauncher.openLensPlayStore(this)
                 }
             }
         }
@@ -1639,31 +1548,34 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         calibrationLabel?.text = "$shortName · ${config.widthPercent}%×${config.heightDp}dp"
     }
 
+    private fun isOnLeftmostHomePageForBarFeed(): Boolean {
+        if (!AccessibilityForegroundState.isConnected) return true
+        if (AccessibilityForegroundState.isMinusOneActive) return false
+        val sig = AccessibilityForegroundState.currentPageSignature
+        val confirmedFirst = prefs.customFirstPageSignature
+        if (confirmedFirst.isNotBlank() && !confirmedFirst.endsWith("|")) {
+            return sig == confirmedFirst
+        }
+        // Auto-detect leftmost page vs right pages from launcher page indicator when not manually marked
+        if (sig.contains("第 1 頁") || sig.contains("第1頁") ||
+            sig.contains("第 1 页") || sig.contains("第1页") ||
+            sig.contains("Page 1", ignoreCase = true) ||
+            sig.contains("1 of", ignoreCase = true) ||
+            Regex("\\b1\\s*/\\s*\\d+").containsMatchIn(sig)
+        ) {
+            return true
+        }
+        if (Regex("第\\s*[2-9]\\d*\\s*[頁页]|Page\\s+[2-9]|\\b[2-9]\\s*/\\s*\\d+|\\b[2-9]\\s+of\\b", RegexOption.IGNORE_CASE)
+                .containsMatchIn(sig)
+        ) {
+            return false
+        }
+        return true
+    }
+
     private fun updateLeftEdgeVisibility(homeVisible: Boolean, isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive) {
-        val edge = leftEdgeView ?: return
-        if (!prefs.leftEdgeFeedEnabled || pagePickerView != null) {
-            edge.visibility = View.GONE
-            return
-        }
-        val allowOnThisPage = when (prefs.feedTriggerMode) {
-            FeedTriggerMode.FIRST_HOME_PAGE -> {
-                if (!homeVisible || isMinusOne) {
-                    false
-                } else if (AccessibilityForegroundState.isConnected && prefs.customFirstPageSignature.isNotBlank()) {
-                    AccessibilityForegroundState.isOnConfirmedFirstPage
-                } else {
-                    true
-                }
-            }
-            FeedTriggerMode.MINUS_ONE_AUTO_REPLACE -> {
-                isCalibrationMode
-            }
-            FeedTriggerMode.MINUS_ONE_EDGE_LAUNCH -> {
-                // On OEM Minus-One screen: bottom search bar is hidden, left-edge interactive pull is ACTIVE!
-                isMinusOne || isCalibrationMode
-            }
-        }
-        edge.visibility = if (allowOnThisPage) View.VISIBLE else View.GONE
+        // Left-edge strip intentionally retired; Google Feed is launched exclusively from the bottom Search Bar on the leftmost page.
+        leftEdgeView?.visibility = View.GONE
     }
 
     private var pendingShowRunnable: Runnable? = null

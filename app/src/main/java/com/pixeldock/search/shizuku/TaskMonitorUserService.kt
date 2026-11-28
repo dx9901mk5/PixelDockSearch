@@ -35,14 +35,7 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
         val topOpaqueLine = findNonNullLine(windowOutput, "mTopFullscreenOpaqueWindowState")
         val focusedAppLine = findNonNullLine(windowOutput, "mFocusedApp")
 
-        // 1. Detect overlay-style OEM Minus-One (e.g., Window{com.vivo.hiboard:... u0 HiBoard type=2}) immediately
-        if (focusLine.contains("HiBoard", ignoreCase = true) ||
-            focusLine.contains("com.vivo.hiboard", ignoreCase = true) ||
-            topOpaqueLine.contains("HiBoard", ignoreCase = true)
-        ) {
-            return "com.vivo.hiboard"
-        }
-
+        // 1. Keep bar rock-solid on desktop (do not hide on overlay-type HiBoard sub-windows)
         // 2. Detect SystemUI overlays / dialogs / drawers / popups on the active focus window
         if (focusLine.contains("NotificationShade") ||
             focusLine.contains("Bouncer") ||
@@ -219,15 +212,30 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
     }
 
     override fun launchGoogleAppLens(): Boolean {
-        // Fast direct Lens activity / deep-link launch (verified real URI: google://lens -> com.google.android.apps.lens.MainActivity)
+        // Launch standalone Google Lens app from Play Store (com.google.ar.lens) directly via shell (no BAL block)
         val directCommands = listOf(
-            "am start -a android.intent.action.VIEW -d 'google://lens' com.google.android.googlequicksearchbox",
-            "am start -a android.intent.action.VIEW -d 'google://lens' -n com.google.android.googlequicksearchbox/com.google.android.apps.lens.MainActivity",
-            "am start -n com.google.android.googlequicksearchbox/com.google.android.apps.search.lens.LensActivity"
+            "am start -n com.google.ar.lens/com.google.vr.apps.ornament.app.lens.LensLauncherActivity",
+            "monkey -p com.google.ar.lens -c android.intent.category.LAUNCHER 1 2>/dev/null"
         )
         for (cmd in directCommands) {
             val out = runShell(cmd)
-            if (isAmStartSuccess(out)) {
+            if (isAmStartSuccess(out) || out.contains("Events injected", ignoreCase = true)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    override fun launchGeminiVoice(): Boolean {
+        // Launch Gemini voice listening overlay directly via shell (bypasses Android 15-17 BAL)
+        val directCommands = listOf(
+            "am start -a android.intent.action.VOICE_COMMAND",
+            "am start -a android.intent.action.ASSIST",
+            "monkey -p com.google.android.apps.bard -c android.intent.category.LAUNCHER 1 2>/dev/null"
+        )
+        for (cmd in directCommands) {
+            val out = runShell(cmd)
+            if (isAmStartSuccess(out) || out.contains("Events injected", ignoreCase = true)) {
                 return true
             }
         }

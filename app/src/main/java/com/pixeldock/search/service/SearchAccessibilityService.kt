@@ -306,9 +306,10 @@ class SearchAccessibilityService : AccessibilityService() {
         val topTokens = ArrayList<String>(4)
 
         // Check active windows for:
-        // 1. Overlay-style OEM Minus-One sub-windows (e.g., com.vivo.hiboard HiBoard type=2)
-        // 2. Other apps in Floating Window / Mini-Window / Freeform / PiP / Split-Screen mode
-        // 3. Floating launcher popup menus (long-press shortcut menu)
+        // 1. Other apps in Floating Window / Mini-Window / Freeform / PiP / Split-Screen mode
+        // 2. Floating launcher popup menus (long-press shortcut menu)
+        // Note: Overlay-style OEM Minus-One sub-windows (e.g. HiBoard type=2) are intentionally NOT
+        // treated as hiding triggers here so desktop page swiping stays 100% rock-solid without flicker.
         try {
             val displayMetrics = resources.displayMetrics
             val screenW = displayMetrics.widthPixels
@@ -319,25 +320,13 @@ class SearchAccessibilityService : AccessibilityService() {
                 val root = win.root ?: continue
                 val winPkg = root.packageName?.toString() ?: ""
                 val title = win.title?.toString() ?: ""
-                if (winPkg == "com.vivo.hiboard" ||
-                    title.contains("HiBoard", ignoreCase = true) ||
-                    LauncherGestureBus.isMinusOnePackageOrClass(
-                        winPkg, title, prefs.customMinusOnePackage, prefs.customMinusOneSignature, "", cachedLaunchers
-                    )
-                ) {
-                    win.getBoundsInScreen(rect)
-                    // Only count as active Minus-One when its window is visibly on-screen (> 25% of screen width)
-                    if (rect.width() > screenW / 4 && rect.right > screenW / 4 && rect.left < (screenW * 3) / 4) {
-                        minusOneDetected = true
-                        break
-                    }
-                }
                 if (win.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
                     winPkg.isNotBlank() &&
                     winPkg !in cachedLaunchers &&
                     winPkg != packageName &&
                     winPkg != "com.android.systemui" &&
                     winPkg != "android" &&
+                    winPkg != "com.vivo.hiboard" &&
                     !winPkg.contains("inputmethod", ignoreCase = true) &&
                     !winPkg.contains("livewallpaper", ignoreCase = true)
                 ) {

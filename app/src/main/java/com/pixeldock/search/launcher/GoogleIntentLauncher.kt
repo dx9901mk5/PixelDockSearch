@@ -86,39 +86,27 @@ object GoogleIntentLauncher {
         }
     }
 
-    fun launchVoiceSearch(context: Context) {
-        val bridgeIntent = Intent(context, VoiceSearchBridgeActivity::class.java).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION or
-                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
-            )
+    fun launchGeminiVoice(context: Context): Boolean {
+        val candidates = listOf(
+            Intent(Intent.ACTION_VOICE_COMMAND),
+            Intent(Intent.ACTION_ASSIST),
+            context.packageManager.getLaunchIntentForPackage("com.google.android.apps.bard")
+        )
+        if (tryStartAny(context, candidates)) {
+            return true
         }
-        val noAnimBundle = ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
-        val started = runCatching {
-            context.startActivity(bridgeIntent, noAnimBundle)
-            true
-        }.getOrDefault(false)
-
-        if (!started) {
-            Toast.makeText(context, "找不到 Google 語音輸入服務", Toast.LENGTH_SHORT).show()
-        }
+        Toast.makeText(context, "找不到 Gemini 語音助理，請確認已安裝 Gemini 或 Google App", Toast.LENGTH_SHORT).show()
+        return false
     }
 
-    fun launchGoogleLens(context: Context): Boolean {
+    fun isStandaloneLensInstalled(context: Context): Boolean {
+        return runCatching {
+            context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE) != null
+        }.getOrDefault(false)
+    }
+
+    fun launchStandaloneLens(context: Context): Boolean {
         val candidates = listOf(
-            // Real exported Google App Lens activity (verified via dumpsys package: Scheme="google", Authority="lens" -> com.google.android.apps.lens.MainActivity)
-            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")).apply {
-                setPackage(GOOGLE_APP_PACKAGE)
-            },
-            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")).apply {
-                component = ComponentName(
-                    GOOGLE_APP_PACKAGE,
-                    "com.google.android.apps.lens.MainActivity"
-                )
-            },
-            Intent(Intent.ACTION_VIEW, Uri.parse("google://lens")),
             context.packageManager.getLaunchIntentForPackage(LENS_PACKAGE),
             Intent(Intent.ACTION_MAIN).apply {
                 component = ComponentName(
@@ -127,20 +115,33 @@ object GoogleIntentLauncher {
                 )
             }
         )
-        for (intent in candidates) {
-            if (intent == null) continue
-            val resolvable = runCatching {
-                context.packageManager.resolveActivity(intent, 0) != null
-            }.getOrDefault(false)
-            if (!resolvable) continue
-            try {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                context.startActivity(intent)
-                return true
-            } catch (_: Throwable) {
-            }
+        return tryStartAny(context, candidates)
+    }
+
+    fun openLensPlayStore(context: Context) {
+        Toast.makeText(context, "未安裝 Google 智慧鏡頭 App，正在前往 Play 商店…", Toast.LENGTH_SHORT).show()
+        val candidates = listOf(
+            Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$LENS_PACKAGE")).apply {
+                setPackage("com.android.vending")
+            },
+            Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$LENS_PACKAGE")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$LENS_PACKAGE"))
+        )
+        if (!tryStartAny(context, candidates)) {
+            Toast.makeText(context, "請前往 Google Play 商店搜尋安裝「Google 智慧鏡頭」", Toast.LENGTH_LONG).show()
         }
-        return false
+    }
+
+    fun launchVoiceSearch(context: Context) {
+        launchGeminiVoice(context)
+    }
+
+    fun launchGoogleLens(context: Context): Boolean {
+        if (isStandaloneLensInstalled(context)) {
+            return launchStandaloneLens(context)
+        }
+        openLensPlayStore(context)
+        return true
     }
 
     fun launchGoogleFeed(context: Context) {

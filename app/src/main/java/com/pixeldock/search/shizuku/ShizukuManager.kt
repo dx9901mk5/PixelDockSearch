@@ -171,6 +171,18 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    fun launchGeminiVoice(): Boolean {
+        val svc = taskService ?: run {
+            bindServiceIfNeeded()
+            return false
+        }
+        return try {
+            svc.launchGeminiVoice()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun prewarmGoogleApp(): Boolean {
         return try {
             taskService?.prewarmGoogleApp() == true

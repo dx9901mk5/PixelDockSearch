@@ -15,8 +15,10 @@
 
     <queries>
         <package android:name="com.google.android.googlequicksearchbox" />
+        <package android:name="com.google.android.apps.bard" />
         <package android:name="com.google.android.tts" />
         <package android:name="com.google.ar.lens" />
+        <package android:name="com.android.vending" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
@@ -25,13 +27,14 @@
             <action android:name="com.android.launcher3.WINDOW_OVERLAY" />
         </intent>
         <intent>
-            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+            <action android:name="android.intent.action.VOICE_COMMAND" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.ASSIST" />
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
-            <data
-                android:host="lens"
-                android:scheme="google" />
+            <data android:scheme="market" />
         </intent>
     </queries>
 

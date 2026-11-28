@@ -6,6 +6,7 @@ interface ITaskMonitorService {
     String getForegroundPackage();
     boolean grantUsageStats(String packageName);
     boolean launchGoogleAppLens();
+    boolean launchGeminiVoice();
     boolean prewarmGoogleApp();
     boolean captureScreenToPath(String outputPath);
     byte[] captureScreenJpeg(int maxWidth, int quality);

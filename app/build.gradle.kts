@@ -11,8 +11,8 @@ android {
         applicationId = "com.pixeldock.search"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.6.3"
+        versionCode = 17
+        versionName = "1.7.0"
     }
 
     signingConfigs {
