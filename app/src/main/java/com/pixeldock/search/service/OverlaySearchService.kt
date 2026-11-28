@@ -1546,19 +1546,25 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
         edge.visibility = if (allowOnThisPage) View.VISIBLE else View.GONE
     }
 
+    private var pendingHideRunnable: Runnable? = null
+
     private fun setOverlayVisibility(
         visible: Boolean,
         isMinusOne: Boolean = AccessibilityForegroundState.isMinusOneActive,
-        slideDownRestore: Boolean = false
+        slideDownRestore: Boolean = false,
+        immediateHide: Boolean = false
     ) {
         val view = overlayRoot ?: return
         if (!isOverlayAttached) return
         // Bottom search bar must NEVER show on Minus-One screen
         val showSearchBar = visible && !isMinusOne
         updateLeftEdgeVisibility(showSearchBar, isMinusOne)
-        if (isOverlayVisible == showSearchBar) return
-        isOverlayVisible = showSearchBar
+
         if (showSearchBar) {
+            pendingHideRunnable?.let { mainHandler.removeCallbacks(it) }
+            pendingHideRunnable = null
+            if (isOverlayVisible) return
+            isOverlayVisible = true
             view.animate().cancel()
             if (slideDownRestore) {
                 val density = (currentSnapshot ?: DisplayProfile.fromContext(this)).density
@@ -1577,8 +1583,28 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                 view.visibility = View.VISIBLE
             }
         } else {
-            view.animate().cancel()
-            view.visibility = View.GONE
+            if (!isOverlayVisible) {
+                pendingHideRunnable?.let { mainHandler.removeCallbacks(it) }
+                pendingHideRunnable = null
+                return
+            }
+            if (immediateHide || isMinusOne) {
+                pendingHideRunnable?.let { mainHandler.removeCallbacks(it) }
+                pendingHideRunnable = null
+                isOverlayVisible = false
+                view.animate().cancel()
+                view.visibility = View.GONE
+            } else if (pendingHideRunnable == null) {
+                // 90ms anti-flicker debounce absorbs transient overlay/status-bar glitches while staying snappy
+                val hideTask = Runnable {
+                    pendingHideRunnable = null
+                    isOverlayVisible = false
+                    view.animate().cancel()
+                    view.visibility = View.GONE
+                }
+                pendingHideRunnable = hideTask
+                mainHandler.postDelayed(hideTask, 90L)
+            }
         }
     }
 

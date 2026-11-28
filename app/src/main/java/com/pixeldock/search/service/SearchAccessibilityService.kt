@@ -89,18 +89,28 @@ class SearchAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // Ignore transient overlay/toast/IME windows that do not represent a real foreground app switch
+                // Ignore transient overlay/toast/IME/floating-pill windows that do not represent a real foreground app switch
                 if (cls.contains("Toast", ignoreCase = true) ||
                     cls.contains("InputMethod", ignoreCase = true) ||
+                    pkg == "android" ||
                     pkg.contains("inputmethod", ignoreCase = true) ||
                     pkg.contains("screenrecorder", ignoreCase = true) ||
-                    pkg.contains("smartshot", ignoreCase = true)
+                    pkg.contains("smartshot", ignoreCase = true) ||
+                    pkg.contains("floatingball", ignoreCase = true) ||
+                    pkg.contains("originisland", ignoreCase = true) ||
+                    pkg.contains("daemonservice", ignoreCase = true) ||
+                    pkg.contains("livewallpaper", ignoreCase = true)
                 ) {
                     return
                 }
 
                 if (LauncherGestureBus.isMinusOnePackageOrClass(
-                        pkg, cls, prefs.customMinusOnePackage, prefs.customMinusOneSignature, ""
+                        pkg,
+                        cls,
+                        prefs.customMinusOnePackage,
+                        prefs.customMinusOneSignature,
+                        "",
+                        cachedLaunchers
                     )
                 ) {
                     val sig = "$pkg|$cls"
@@ -122,6 +132,17 @@ class SearchAccessibilityService : AccessibilityService() {
                 }
 
                 if (!isLauncher) {
+                    // Crucial anti-flicker guard: if the actual active focused window is STILL the stock launcher,
+                    // this TYPE_WINDOW_STATE_CHANGED came from a non-focused floating pill/banner/service overlay.
+                    val activeWindowPkg = try {
+                        rootInActiveWindow?.packageName?.toString()
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    if (activeWindowPkg != null && activeWindowPkg in cachedLaunchers) {
+                        return
+                    }
+
                     AccessibilityForegroundState.isSystemOverlay = false
                     AccessibilityForegroundState.isMinusOneActive = false
                     AccessibilityForegroundState.isAppDrawerOpen = false
@@ -159,7 +180,8 @@ class SearchAccessibilityService : AccessibilityService() {
                     } else {
                         currentScrollY - prevY
                     }
-                    if (deltaY > 0) {
+                    // Ignore tiny 1-17px widget micro-scrolls that cause the bar to twitch on the home screen
+                    if (deltaY >= 18) {
                         LauncherGestureBus.dispatchVerticalScroll(deltaY)
                     }
                     scheduleHierarchyScan(pkg, cls, force = false)
@@ -381,7 +403,8 @@ class SearchAccessibilityService : AccessibilityService() {
                 cls,
                 prefs.customMinusOnePackage,
                 prefs.customMinusOneSignature,
-                pageSig
+                pageSig,
+                cachedLaunchers
             )
         ) {
             minusOneDetected = true
@@ -421,6 +444,10 @@ class SearchAccessibilityService : AccessibilityService() {
     }
 
     private fun hasAnyVisibleTextNode(root: AccessibilityNodeInfo, queries: List<String>): Boolean {
+        val dm = resources.displayMetrics
+        val screenW = dm.widthPixels
+        val screenH = dm.heightPixels
+        val rect = Rect()
         for (q in queries) {
             val matches = try {
                 root.findAccessibilityNodeInfosByText(q)
@@ -428,7 +455,13 @@ class SearchAccessibilityService : AccessibilityService() {
                 null
             } ?: continue
             for (node in matches) {
-                if (node.isVisibleToUser) {
+                if (!node.isVisibleToUser) continue
+                node.getBoundsInScreen(rect)
+                // Strictly verify the node is actually ON-SCREEN (excludes offscreen ViewPager Minus-One sibling on Page 1!)
+                if (rect.width() > 0 && rect.height() > 0 &&
+                    rect.centerX() in 0 until screenW &&
+                    rect.centerY() in 0 until screenH
+                ) {
                     return true
                 }
             }
@@ -492,9 +525,7 @@ class SearchAccessibilityService : AccessibilityService() {
         )
         private val MINUS_ONE_QUERIES = listOf(
             "全部早報",
-            "全部早报",
-            "小V建議",
-            "小V建议"
+            "全部早报"
         )
     }
 }

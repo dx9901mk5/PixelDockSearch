@@ -199,15 +199,22 @@ object LauncherGestureBus {
         cls: String,
         customPkg: String = "",
         customSig: String = "",
-        pageSig: String = ""
+        pageSig: String = "",
+        launcherPackages: Set<String> = emptySet()
     ): Boolean {
         val p = pkg.lowercase()
         val c = cls.lowercase()
-        if (customSig.isNotBlank() && pageSig.isNotBlank() && pageSig == customSig) {
+        // Never match an empty-suffix signature like "com.bbk.launcher2|" (which matches EVERY home page!)
+        val hasMeaningfulCustomSig = customSig.isNotBlank() && !customSig.endsWith("|")
+        if (hasMeaningfulCustomSig && pageSig.isNotBlank() && pageSig == customSig) {
             return true
         }
-        if (customPkg.isNotBlank() && customSig.isBlank() && p == customPkg.lowercase()) {
-            return true
+        // Only match customPkg by package name alone if it is NOT a home launcher package
+        if (customPkg.isNotBlank() && !hasMeaningfulCustomSig) {
+            val isLauncherPkg = launcherPackages.any { it.equals(customPkg, ignoreCase = true) }
+            if (!isLauncherPkg && p == customPkg.lowercase()) {
+                return true
+            }
         }
         if (p in minusOnePackages) return true
         return minusOneKeywords.any { kw -> p.contains(kw) || c.contains(kw) }
