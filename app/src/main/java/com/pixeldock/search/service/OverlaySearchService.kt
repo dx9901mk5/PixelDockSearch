@@ -287,6 +287,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
                     !AccessibilityForegroundState.isAppDrawerOpen &&
                     !AccessibilityForegroundState.isLauncherPopupOpen &&
                     !AccessibilityForegroundState.isMinusOneActive &&
+                    !AccessibilityForegroundState.isFloatingAppOpen &&
                     AccessibilityForegroundState.foregroundPackage in detector.getLauncherPackages()
 
                 if (shizukuManager.taskService != null && pollInFlight.compareAndSet(false, true)) {

@@ -79,6 +79,10 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
             ) {
                 return topOpaquePkg
             }
+            // 5. Hide search bar whenever any other app is visibly open in Freeform / Floating / Mini-Window mode
+            if (focusPkg.contains("launcher", ignoreCase = true) && hasVisibleFreeformApp()) {
+                return SYSTEM_UI_OVERLAY
+            }
             return focusPkg
         }
 
@@ -528,6 +532,17 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
             TouchCalibration(xScale, yScale, maxX)
         } catch (_: Throwable) {
             TouchCalibration(1f, 1f, 0)
+        }
+    }
+
+    private fun hasVisibleFreeformApp(): Boolean {
+        return try {
+            val out = runShell(
+                "dumpsys activity activities 2>/dev/null | grep -E 'mode=freeform.*visible=true|windowingMode=5.*visible=true|isInFreeform=true' | head -n 1"
+            )
+            out.isNotBlank()
+        } catch (_: Throwable) {
+            false
         }
     }
 

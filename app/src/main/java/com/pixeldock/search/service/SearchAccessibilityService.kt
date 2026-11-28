@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.pixeldock.search.data.FeedTriggerMode
 import com.pixeldock.search.data.PrefsRepository
 import com.pixeldock.search.detector.AccessibilityForegroundState
@@ -140,6 +141,8 @@ class SearchAccessibilityService : AccessibilityService() {
                         null
                     }
                     if (activeWindowPkg != null && activeWindowPkg in cachedLaunchers) {
+                        // Still rescan launcher windows so newly opened floating/mini-window apps hide the bar immediately
+                        scheduleHierarchyScan(activeWindowPkg, cls, force = true)
                         return
                     }
 
@@ -298,16 +301,19 @@ class SearchAccessibilityService : AccessibilityService() {
         var popupDetected = LauncherGestureBus.isLauncherPopupClassOrId(cls)
         var drawerDetected = LauncherGestureBus.isAppDrawerClass(cls)
         var minusOneDetected = false
+        var floatingAppDetected = false
         var pageIndicatorText = ""
         val topTokens = ArrayList<String>(4)
 
         // Check active windows for:
         // 1. Overlay-style OEM Minus-One sub-windows (e.g., com.vivo.hiboard HiBoard type=2)
-        // 2. Floating launcher popup menus (long-press shortcut menu)
+        // 2. Other apps in Floating Window / Mini-Window / Freeform / PiP / Split-Screen mode
+        // 3. Floating launcher popup menus (long-press shortcut menu)
         try {
             val displayMetrics = resources.displayMetrics
             val screenW = displayMetrics.widthPixels
-            val screenArea = screenW.toLong() * displayMetrics.heightPixels.toLong()
+            val screenH = displayMetrics.heightPixels
+            val screenArea = screenW.toLong() * screenH.toLong()
             val rect = Rect()
             for (win in windows) {
                 val root = win.root ?: continue
@@ -323,6 +329,25 @@ class SearchAccessibilityService : AccessibilityService() {
                     // Only count as active Minus-One when its window is visibly on-screen (> 25% of screen width)
                     if (rect.width() > screenW / 4 && rect.right > screenW / 4 && rect.left < (screenW * 3) / 4) {
                         minusOneDetected = true
+                        break
+                    }
+                }
+                if (win.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    winPkg.isNotBlank() &&
+                    winPkg !in cachedLaunchers &&
+                    winPkg != packageName &&
+                    winPkg != "com.android.systemui" &&
+                    winPkg != "android" &&
+                    !winPkg.contains("inputmethod", ignoreCase = true) &&
+                    !winPkg.contains("livewallpaper", ignoreCase = true)
+                ) {
+                    win.getBoundsInScreen(rect)
+                    // Visible floating / mini-window / freeform / PiP / split-screen app on screen
+                    if (rect.width() >= 120 && rect.height() >= 120 &&
+                        rect.right > 0 && rect.left < screenW &&
+                        rect.bottom > 0 && rect.top < screenH
+                    ) {
+                        floatingAppDetected = true
                         break
                     }
                 }
@@ -434,6 +459,7 @@ class SearchAccessibilityService : AccessibilityService() {
         AccessibilityForegroundState.isLauncherPopupOpen = popupDetected
         AccessibilityForegroundState.isAppDrawerOpen = drawerDetected
         AccessibilityForegroundState.isMinusOneActive = minusOneDetected
+        AccessibilityForegroundState.isFloatingAppOpen = floatingAppDetected
 
         if (minusOneDetected) {
             LauncherGestureBus.dispatchForegroundVisibility(
@@ -451,7 +477,10 @@ class SearchAccessibilityService : AccessibilityService() {
             LauncherGestureBus.dispatchAppDrawerState(drawerDetected)
         }
 
-        val shouldShow = !popupDetected && !drawerDetected && !AccessibilityForegroundState.isSystemOverlay
+        val shouldShow = !popupDetected &&
+            !drawerDetected &&
+            !floatingAppDetected &&
+            !AccessibilityForegroundState.isSystemOverlay
         LauncherGestureBus.dispatchForegroundVisibility(
             shouldShowHomeOverlay = shouldShow,
             isAppDrawer = drawerDetected,
@@ -520,6 +549,7 @@ class SearchAccessibilityService : AccessibilityService() {
         AccessibilityForegroundState.isAppDrawerOpen = false
         AccessibilityForegroundState.isLauncherPopupOpen = false
         AccessibilityForegroundState.isMinusOneActive = false
+        AccessibilityForegroundState.isFloatingAppOpen = false
         lastScrollYByWindow.clear()
         super.onDestroy()
     }

@@ -259,6 +259,9 @@ object AccessibilityForegroundState {
     var isMinusOneActive: Boolean = false
 
     @Volatile
+    var isFloatingAppOpen: Boolean = false
+
+    @Volatile
     var currentWindowClass: String = ""
 
     @Volatile
