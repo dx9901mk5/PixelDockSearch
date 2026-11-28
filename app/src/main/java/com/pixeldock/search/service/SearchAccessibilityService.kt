@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.pixeldock.search.data.FeedTriggerMode
@@ -13,23 +15,47 @@ import com.pixeldock.search.detector.AccessibilityForegroundState
 import com.pixeldock.search.detector.LauncherGestureBus
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SearchAccessibilityService : AccessibilityService() {
 
-    private lateinit var prefs: PrefsRepository
+    private val prefs by lazy { PrefsRepository(applicationContext) }
     private val lastScrollYByWindow = ConcurrentHashMap<Int, Int>()
+    private val retryHandler = Handler(Looper.getMainLooper())
+    private val scanExecutor = Executors.newSingleThreadExecutor()
+    private val scanInFlight = AtomicBoolean(false)
+
+    @Volatile
     private var cachedLaunchers: Set<String> = emptySet()
+
+    @Volatile
     private var lastLauncherRefreshMs = 0L
+
+    @Volatile
     private var lastContentScanMs = 0L
+
+    private var pendingRescanRunnable: Runnable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        prefs = PrefsRepository(this)
-        refreshLaunchersIfNeeded()
-        AccessibilityForegroundState.isConnected = true
+        try {
+            prefs.accessibilityKeepAlive = true
+            refreshLaunchersIfNeeded()
+            AccessibilityForegroundState.isConnected = true
+        } catch (_: Throwable) {
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        try {
+            handleAccessibilityEvent(event)
+        } catch (_: Throwable) {
+            // Never allow an uncaught exception to kill and disable the AccessibilityService
+        }
+    }
+
+    private fun handleAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return
@@ -61,7 +87,6 @@ class SearchAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // Immediate detection for built-in or user-confirmed Minus-One package
                 if (LauncherGestureBus.isMinusOnePackageOrClass(
                         pkg, cls, prefs.customMinusOnePackage, prefs.customMinusOneSignature, ""
                     )
@@ -84,7 +109,6 @@ class SearchAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // Non-launcher app opened -> INSTANT hide (< 16ms)
                 if (!isLauncher) {
                     AccessibilityForegroundState.isSystemOverlay = false
                     AccessibilityForegroundState.isMinusOneActive = false
@@ -108,10 +132,9 @@ class SearchAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // Inside Launcher: inspect immediately for Popup Menu (Fig 1), App Drawer (Fig 3), or Minus-One
                 AccessibilityForegroundState.isSystemOverlay = false
                 AccessibilityForegroundState.foregroundPackage = pkg
-                inspectLauncherHierarchy(pkg, cls, force = true)
+                scheduleHierarchyScan(pkg, cls, force = true)
             }
 
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
@@ -127,44 +150,63 @@ class SearchAccessibilityService : AccessibilityService() {
                     if (deltaY > 0) {
                         LauncherGestureBus.dispatchVerticalScroll(deltaY)
                     }
-                    inspectLauncherHierarchy(pkg, cls, force = false)
+                    scheduleHierarchyScan(pkg, cls, force = false)
                     schedulePostAnimationRescan(pkg, cls)
                 }
             }
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 if (isLauncher) {
-                    inspectLauncherHierarchy(pkg, cls, force = false)
+                    scheduleHierarchyScan(pkg, cls, force = false)
                     schedulePostAnimationRescan(pkg, cls)
                 } else if (pkg == "com.google.android.googlequicksearchbox" &&
                     LauncherGestureBus.isAutoClickGoogleLensPending()
                 ) {
-                    tryClickGoogleAppLensButton()
+                    scanExecutor.execute { tryClickGoogleAppLensButton() }
                 }
             }
         }
     }
 
-    private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var pendingRescanRunnable: Runnable? = null
+    private fun scheduleHierarchyScan(pkg: String, cls: String, force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastContentScanMs < 140L) return
+        if (!scanInFlight.compareAndSet(false, true)) return
+        lastContentScanMs = now
+        try {
+            scanExecutor.execute {
+                try {
+                    inspectLauncherHierarchy(pkg, cls)
+                } catch (_: Throwable) {
+                } finally {
+                    scanInFlight.set(false)
+                }
+            }
+        } catch (_: Throwable) {
+            scanInFlight.set(false)
+        }
+    }
 
     private fun schedulePostAnimationRescan(pkg: String, cls: String) {
         pendingRescanRunnable?.let { retryHandler.removeCallbacks(it) }
         val r = Runnable {
             if (AccessibilityForegroundState.foregroundPackage == pkg) {
-                inspectLauncherHierarchy(pkg, cls, force = true)
+                scheduleHierarchyScan(pkg, cls, force = true)
             }
         }
         pendingRescanRunnable = r
-        retryHandler.postDelayed(r, 260L)
+        retryHandler.postDelayed(r, 280L)
     }
 
     private fun scheduleLensAutoClickRetries() {
-        tryClickGoogleAppLensButton()
-        for (delayMs in longArrayOf(200L, 520L, 950L, 1450L)) {
+        scanExecutor.execute { tryClickGoogleAppLensButton() }
+        for (delayMs in longArrayOf(220L, 550L, 1000L, 1500L)) {
             retryHandler.postDelayed({
                 if (LauncherGestureBus.isAutoClickGoogleLensPending()) {
-                    tryClickGoogleAppLensButton()
+                    try {
+                        scanExecutor.execute { tryClickGoogleAppLensButton() }
+                    } catch (_: Throwable) {
+                    }
                 }
             }, delayMs)
         }
@@ -181,7 +223,7 @@ class SearchAccessibilityService : AccessibilityService() {
             val queue = ArrayDeque<AccessibilityNodeInfo>()
             queue.add(root)
             var visited = 0
-            while (queue.isNotEmpty() && visited < 100) {
+            while (queue.isNotEmpty() && visited < 80) {
                 val node = queue.removeFirst()
                 visited++
                 val desc = node.contentDescription?.toString()?.trim().orEmpty()
@@ -218,18 +260,14 @@ class SearchAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun inspectLauncherHierarchy(pkg: String, cls: String, force: Boolean) {
-        val now = System.currentTimeMillis()
-        if (!force && now - lastContentScanMs < 25L) return
-        lastContentScanMs = now
-
+    private fun inspectLauncherHierarchy(pkg: String, cls: String) {
         var popupDetected = LauncherGestureBus.isLauncherPopupClassOrId(cls)
         var drawerDetected = LauncherGestureBus.isAppDrawerClass(cls)
         var minusOneDetected = false
         var pageIndicatorText = ""
         val topTokens = ArrayList<String>(4)
 
-        // Check active windows for floating launcher popup menus (e.g., long-press app shortcut menu)
+        // Check active windows for floating launcher popup menus (long-press shortcut menu)
         try {
             val displayMetrics = resources.displayMetrics
             val screenArea = displayMetrics.widthPixels.toLong() * displayMetrics.heightPixels.toLong()
@@ -240,15 +278,15 @@ class SearchAccessibilityService : AccessibilityService() {
                 if (winPkg == pkg) {
                     win.getBoundsInScreen(rect)
                     val winArea = rect.width().toLong() * rect.height().toLong()
-                    // A smaller overlay window belonging to the launcher is typically a long-press popup or folder
                     if (winArea in 1L until (screenArea * 65L / 100L)) {
                         val title = win.title?.toString() ?: ""
-                        if (LauncherGestureBus.isLauncherPopupClassOrId(title) || hasPopupTexts(root)) {
+                        if (LauncherGestureBus.isLauncherPopupClassOrId(title) ||
+                            hasAnyVisibleTextNode(root, POPUP_QUERIES)
+                        ) {
                             popupDetected = true
                         }
                     }
                 }
-                root.recycle()
                 if (popupDetected) break
             }
         } catch (_: Throwable) {
@@ -260,53 +298,33 @@ class SearchAccessibilityService : AccessibilityService() {
             null
         }
 
-        // Fast native full-tree text check (NOT capped by BFS node limit!) with isVisibleToUser verification
+        // Fast native full-tree text check (NOT capped by BFS limit) with isVisibleToUser verification
         if (activeRoot != null) {
             if (!drawerDetected) {
-                drawerDetected = hasAnyVisibleTextNode(
-                    activeRoot,
-                    listOf("搜尋應用程式", "全部應用程式", "建議的應用程式", "原子元件", "搜索应用", "全部应用", "Search apps", "All apps")
-                )
+                drawerDetected = hasAnyVisibleTextNode(activeRoot, DRAWER_QUERIES)
             }
             if (!popupDetected) {
-                popupDetected = hasAnyVisibleTextNode(
-                    activeRoot,
-                    listOf("解除安裝", "應用程式資訊", "圖示樣式", "卸载", "应用信息", "Uninstall", "App info")
-                )
+                popupDetected = hasAnyVisibleTextNode(activeRoot, POPUP_QUERIES)
             }
         }
 
-        if (activeRoot != null) {
+        // Only run lightweight BFS (max 35 nodes) for page indicator / signature when neither drawer nor popup is open
+        if (activeRoot != null && !drawerDetected && !popupDetected) {
             try {
                 val queue = ArrayDeque<AccessibilityNodeInfo>()
                 queue.add(activeRoot)
                 var visited = 0
-                while (queue.isNotEmpty() && visited < 75) {
+                while (queue.isNotEmpty() && visited < 35) {
                     val node = queue.removeFirst()
                     visited++
 
                     val text = node.text?.toString()?.trim().orEmpty()
                     val desc = node.contentDescription?.toString()?.trim().orEmpty()
                     val viewId = node.viewIdResourceName?.trim().orEmpty()
-                    val nodeCls = node.className?.toString().orEmpty()
 
-                    if (!popupDetected) {
-                        if (LauncherGestureBus.isLauncherPopupText(text) ||
-                            LauncherGestureBus.isLauncherPopupText(desc) ||
-                            LauncherGestureBus.isLauncherPopupClassOrId(viewId) ||
-                            LauncherGestureBus.isLauncherPopupClassOrId(nodeCls)
-                        ) {
-                            popupDetected = true
-                        }
-                    }
-
-                    if (!drawerDetected) {
-                        if (LauncherGestureBus.isAppDrawerNodeText(text) ||
-                            LauncherGestureBus.isAppDrawerNodeText(desc) ||
-                            LauncherGestureBus.isAppDrawerViewId(viewId)
-                        ) {
-                            drawerDetected = true
-                        }
+                    if (!drawerDetected && LauncherGestureBus.isAppDrawerViewId(viewId)) {
+                        drawerDetected = true
+                        break
                     }
 
                     if (pageIndicatorText.isEmpty() && desc.isNotEmpty() &&
@@ -325,26 +343,12 @@ class SearchAccessibilityService : AccessibilityService() {
                     val childCount = node.childCount
                     for (i in 0 until childCount) {
                         val child = node.getChild(i) ?: continue
-                        if (visited + queue.size < 90) {
+                        if (visited + queue.size < 45) {
                             queue.addLast(child)
-                        } else {
-                            child.recycle()
                         }
                     }
-                    if (node !== activeRoot) {
-                        node.recycle()
-                    }
-                }
-                while (queue.isNotEmpty()) {
-                    val rem = queue.removeFirst()
-                    if (rem !== activeRoot) rem.recycle()
                 }
             } catch (_: Throwable) {
-            } finally {
-                try {
-                    activeRoot.recycle()
-                } catch (_: Throwable) {
-                }
             }
         }
 
@@ -357,7 +361,6 @@ class SearchAccessibilityService : AccessibilityService() {
         AccessibilityForegroundState.currentPageSignature = pageSig
         LauncherGestureBus.dispatchPageSnapshot(pkg, cls, pageSig)
 
-        // Always detect OEM / user-confirmed Minus-One screen so the bottom search bar NEVER appears on it
         if (LauncherGestureBus.isMinusOnePackageOrClass(
                 pkg,
                 cls,
@@ -418,33 +421,6 @@ class SearchAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun hasPopupTexts(root: AccessibilityNodeInfo): Boolean {
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var count = 0
-        var matched = false
-        while (queue.isNotEmpty() && count < 30 && !matched) {
-            val n = queue.removeFirst()
-            count++
-            val t = n.text?.toString().orEmpty()
-            val d = n.contentDescription?.toString().orEmpty()
-            if (LauncherGestureBus.isLauncherPopupText(t) || LauncherGestureBus.isLauncherPopupText(d)) {
-                matched = true
-            } else {
-                for (i in 0 until n.childCount) {
-                    val c = n.getChild(i) ?: continue
-                    queue.addLast(c)
-                }
-            }
-            if (n !== root) n.recycle()
-        }
-        while (queue.isNotEmpty()) {
-            val rem = queue.removeFirst()
-            if (rem !== root) rem.recycle()
-        }
-        return matched
-    }
-
     private fun refreshLaunchersIfNeeded() {
         val now = System.currentTimeMillis()
         if (cachedLaunchers.isNotEmpty() && now - lastLauncherRefreshMs < 30_000L) return
@@ -465,9 +441,7 @@ class SearchAccessibilityService : AccessibilityService() {
                 found.add(p)
             }
         }
-        if (::prefs.isInitialized) {
-            found.addAll(prefs.extraLauncherPackages)
-        }
+        found.addAll(prefs.extraLauncherPackages)
         cachedLaunchers = found
         lastLauncherRefreshMs = now
     }
@@ -475,6 +449,8 @@ class SearchAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        retryHandler.removeCallbacksAndMessages(null)
+        scanExecutor.shutdownNow()
         AccessibilityForegroundState.isConnected = false
         AccessibilityForegroundState.isSystemOverlay = false
         AccessibilityForegroundState.isAppDrawerOpen = false
@@ -482,5 +458,22 @@ class SearchAccessibilityService : AccessibilityService() {
         AccessibilityForegroundState.isMinusOneActive = false
         lastScrollYByWindow.clear()
         super.onDestroy()
+    }
+
+    companion object {
+        private val DRAWER_QUERIES = listOf(
+            "全部應用程式",
+            "搜尋應用程式",
+            "原子元件",
+            "全部应用",
+            "All apps"
+        )
+        private val POPUP_QUERIES = listOf(
+            "解除安裝",
+            "應用程式資訊",
+            "圖示樣式",
+            "卸载",
+            "Uninstall"
+        )
     }
 }

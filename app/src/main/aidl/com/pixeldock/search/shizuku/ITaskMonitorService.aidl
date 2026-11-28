@@ -10,6 +10,7 @@ interface ITaskMonitorService {
     boolean captureScreenToPath(String outputPath);
     byte[] captureScreenJpeg(int maxWidth, int quality);
     boolean isLauncherDrawerOrPopupVisible();
+    boolean ensureAccessibilityServiceEnabled(String componentName);
     void setTouchCallback(ITouchEventCallback callback);
     void destroy();
 }

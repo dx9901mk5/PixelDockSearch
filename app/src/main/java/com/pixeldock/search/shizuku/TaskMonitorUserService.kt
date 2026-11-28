@@ -155,6 +155,26 @@ class TaskMonitorUserService : ITaskMonitorService.Stub() {
         }
     }
 
+    override fun ensureAccessibilityServiceEnabled(componentName: String?): Boolean {
+        if (componentName.isNullOrBlank()) return false
+        val safeComp = componentName.replace(Regex("[^a-zA-Z0-9._/$]"), "")
+        if (safeComp.isEmpty()) return false
+        return try {
+            val currentRaw = runShell("settings get secure enabled_accessibility_services").trim()
+            val cleaned = if (currentRaw == "null") "" else currentRaw
+            val parts = cleaned.split(":").map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
+            if (safeComp !in parts) {
+                parts.add(safeComp)
+            }
+            val joined = parts.joinToString(":")
+            runShell("settings put secure enabled_accessibility_services '$joined'")
+            runShell("settings put secure accessibility_enabled 1")
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     override fun launchGoogleAppLens(): Boolean {
         // 1. Try direct Lens activities / deep link and STRICTLY verify window focus actually entered Lens
         val directCommands = listOf(

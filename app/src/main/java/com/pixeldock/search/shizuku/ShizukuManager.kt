@@ -203,6 +203,15 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    fun ensureAccessibilityServiceEnabled(): Boolean {
+        val comp = "${context.packageName}/com.pixeldock.search.service.SearchAccessibilityService"
+        return try {
+            taskService?.ensureAccessibilityServiceEnabled(comp) == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun setTouchCallback(callback: ITouchEventCallback?) {
         try {
             taskService?.setTouchCallback(callback)

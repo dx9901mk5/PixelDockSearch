@@ -112,6 +112,7 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
     private var drawerScrollOffsetPx = 0f
     private var isTouchDraggingDrawerUp = false
     private var lastSnapshotCaptureMs = 0L
+    private var lastA11yGuardMs = 0L
     private var currentSnapshot: DisplayProfile.DisplayMetricsSnapshot? = null
 
     private val touchEventCallback = object : ITouchEventCallback.Stub() {
@@ -228,6 +229,14 @@ class OverlaySearchService : Service(), LauncherGestureBus.Listener {
 
             if (pollInFlight.compareAndSet(false, true)) {
                 bgExecutor.execute {
+                    // If user had enabled Accessibility and OEM ROM silently turned it off, restore via Shizuku
+                    if (prefs.accessibilityKeepAlive && !AccessibilityForegroundState.isConnected) {
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastA11yGuardMs >= 10_000L && shizukuManager.taskService != null) {
+                            lastA11yGuardMs = nowMs
+                            shizukuManager.ensureAccessibilityServiceEnabled()
+                        }
+                    }
                     val minusOne = try {
                         pagePickerView == null && detector.isMinusOneScreenActive()
                     } catch (_: Throwable) {
